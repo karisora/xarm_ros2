@@ -12,6 +12,7 @@
 - `GET /status`
 - `GET /api/v1/state`
 - `GET /api/v1/units/state`
+- `GET /api/v1/connection-status`
 - `POST /api/v1/unit-tasks/start`
 - `POST /api/v1/commands` (`pause/resume/stop/emergency_stop/reset_state`)
 - `POST /api/v1/manual-commands`
@@ -24,6 +25,18 @@
 - `POST /api/v1/unit-tasks/search`
 
 `/api/v1/unit-tasks/{id}/timeline` と `/api/v1/events` は現時点では `501` を返します。
+
+## 通信状態ステータス
+
+`GET /api/v1/connection-status` で、`filtration-app` と同じ語彙の接続状態を取得できます。
+
+- `status`: `connected` / `degraded` / `disconnected` / `idle`
+- `last_updated_at`: 最後に `/xarm/robot_states` を受信した時刻
+- `last_error`: 直近のROSサービス通信エラー（なければ `null`）
+- `success_rate_percent`: 直近 `window_sec` 秒の成功率
+- `success_count` / `failure_count`: 直近窓の通信試行回数
+
+同じ内容は `GET /api/v1/state` の `details.connection` にも含まれます。
 
 ## ROSサービス対応
 
@@ -97,4 +110,3 @@ ros2 run xarm_api_bridge xarm_api_bridge_server
 - `object_centrifuge_tube_rack_installed` (bool, default: `true`)
 - `object_funnel_rack_installed` (bool, default: `true`)
 - `manual_pump_io` / `manual_waste_io` / `manual_servo_io` (int, default: `-1`)
-

@@ -4,13 +4,15 @@ import math
 import os
 import threading
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Deque, Optional, Tuple
 
 import rclpy
 import uvicorn
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from rclpy.executors import MultiThreadedExecutor
@@ -176,8 +178,13 @@ class XArmApiBridgeNode(Node):
         self._terminal_status: Optional[str] = None
         self._terminal_message: Optional[str] = None
         self._last_robot_msg: Optional[RobotMsg] = None
+        self._last_robot_state_at: Optional[datetime] = None
         self._last_command_source = "gui"
         self._moves: dict[str, dict[str, Any]] = {}
+        self._connection_window_sec = 60.0
+        self._comm_results: Deque[Tuple[datetime, bool]] = deque()
+        self._last_comm_error: Optional[str] = None
+        self._last_comm_error_at: Optional[datetime] = None
 
         ns_prefix = f"/{self.hw_ns}" if self.hw_ns else ""
         self._service_names = {
@@ -193,7 +200,8 @@ class XArmApiBridgeNode(Node):
             "set_tgpio_digital": f"{ns_prefix}/set_tgpio_digital",
         }
 
-        self._clients = {
+        # Avoid clobbering rclpy Node internal "_clients" container.
+        self._service_clients = {
             "motion_enable": self.create_client(SetInt16ById, self._service_names["motion_enable"]),
             "set_mode": self.create_client(SetInt16, self._service_names["set_mode"]),
             "set_state": self.create_client(SetInt16, self._service_names["set_state"]),
@@ -214,8 +222,66 @@ class XArmApiBridgeNode(Node):
     def _on_robot_state(self, msg: RobotMsg) -> None:
         with self._lock:
             self._last_robot_msg = msg
+            self._last_robot_state_at = _now_local()
             # mt_able bitmask > 0 means at least one joint is enabled
             self._robot_mode_enabled = bool(msg.mt_able)
+            self._record_comm_probe_locked(success=True)
+
+    def _record_comm_probe_locked(self, success: bool, error_message: Optional[str] = None) -> None:
+        now = _now_local()
+        self._comm_results.append((now, success))
+        cutoff = timedelta_seconds(self._connection_window_sec)
+        while self._comm_results and (now - self._comm_results[0][0]) > cutoff:
+            self._comm_results.popleft()
+        if success:
+            return
+        self._last_comm_error = error_message or "communication probe failed"
+        self._last_comm_error_at = now
+
+    def _connection_snapshot_locked(self, now: datetime) -> dict[str, Any]:
+        cutoff = timedelta_seconds(self._connection_window_sec)
+        while self._comm_results and (now - self._comm_results[0][0]) > cutoff:
+            self._comm_results.popleft()
+
+        success_count = sum(1 for _, ok in self._comm_results if ok)
+        failure_count = sum(1 for _, ok in self._comm_results if not ok)
+        total = success_count + failure_count
+        success_rate_percent = 100.0 if total == 0 else (success_count / total) * 100.0
+
+        last_updated_at: Optional[str] = None
+        if self._last_robot_state_at is not None:
+            last_updated_at = _iso(self._last_robot_state_at)
+
+        status_value = "idle"
+        stale_sec: Optional[float] = None
+        if self._last_robot_state_at is not None:
+            stale_sec = (now - self._last_robot_state_at).total_seconds()
+            if stale_sec <= 3.0:
+                status_value = "connected"
+            elif stale_sec <= 10.0:
+                status_value = "degraded"
+            else:
+                status_value = "disconnected"
+
+        if failure_count >= 6:
+            status_value = "disconnected"
+        elif failure_count >= 3 and status_value == "connected":
+            status_value = "degraded"
+        elif total > 0 and success_rate_percent < 80.0:
+            status_value = "disconnected"
+        elif total > 0 and success_rate_percent < 95.0 and status_value == "connected":
+            status_value = "degraded"
+
+        return {
+            "status": status_value,
+            "last_updated_at": last_updated_at,
+            "last_error": self._last_comm_error,
+            "success_rate_percent": round(success_rate_percent, 1),
+            "window_sec": int(self._connection_window_sec),
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "stale_sec": None if stale_sec is None else round(max(0.0, stale_sec), 3),
+        }
 
     def _require_command_source(self, command_source: str) -> None:
         if command_source not in ("gui", "upstream"):
@@ -232,9 +298,11 @@ class XArmApiBridgeNode(Node):
             )
 
     def _call_service(self, key: str, request: Any, timeout_sec: float = 3.0) -> Any:
-        client = self._clients[key]
+        client = self._service_clients[key]
         service_name = self._service_names[key]
         if not client.wait_for_service(timeout_sec=timeout_sec):
+            with self._lock:
+                self._record_comm_probe_locked(success=False, error_message=f"service unavailable: {service_name}")
             raise BridgeOperationError(
                 "ROS_SERVICE_UNAVAILABLE",
                 f"ROS service is not available: {service_name}",
@@ -245,6 +313,8 @@ class XArmApiBridgeNode(Node):
         future.add_done_callback(lambda _: event.set())
         if not event.wait(timeout_sec):
             future.cancel()
+            with self._lock:
+                self._record_comm_probe_locked(success=False, error_message=f"service timeout: {service_name}")
             raise BridgeOperationError(
                 "ROS_SERVICE_TIMEOUT",
                 f"ROS service timeout: {service_name}",
@@ -252,12 +322,26 @@ class XArmApiBridgeNode(Node):
             )
         exc = future.exception()
         if exc is not None:
+            with self._lock:
+                self._record_comm_probe_locked(success=False, error_message=f"service error: {service_name}: {str(exc)}")
             raise BridgeOperationError(
                 "ROS_SERVICE_ERROR",
                 f"ROS service call failed: {service_name}",
                 detail={"exception": str(exc)},
             )
+        with self._lock:
+            self._record_comm_probe_locked(success=True)
         return future.result()
+
+    def get_connection_status(self) -> dict[str, Any]:
+        with self._lock:
+            now = _now_local()
+            snapshot = self._connection_snapshot_locked(now)
+            return {
+                "unit_id": self.unit_id,
+                **snapshot,
+                "timestamp": _iso(now),
+            }
 
     def _set_mode(self, mode: int) -> None:
         req = SetInt16.Request()
@@ -830,6 +914,7 @@ class XArmApiBridgeNode(Node):
                 "operation_mode": self._operation_mode,
                 "control_authority": self._control_authority,
                 "details": {
+                    "connection": self._connection_snapshot_locked(now),
                     "robot_mode_enabled": self._robot_mode_enabled,
                     "tray": {
                         "input": {"exists": False, "last_changed_at": _iso(now)},
@@ -899,8 +984,21 @@ class XArmApiBridgeNode(Node):
 
 def create_app(bridge: XArmApiBridgeNode) -> FastAPI:
     app = FastAPI(title="xarm_api_bridge", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-    def require_authorization(authorization: Optional[str] = Header(default=None, alias="Authorization")) -> None:
+    def require_authorization(
+        request: Request,
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+        x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+        token: Optional[str] = Query(default=None),
+    ) -> None:
+        _ = request
         expected = bridge.api_key
         if not expected:
             raise _api_error(
@@ -909,7 +1007,19 @@ def create_app(bridge: XArmApiBridgeNode) -> FastAPI:
                 "Server API key is not configured.",
                 {"hint": "Set FILTRATION_API_KEY or api_key parameter"},
             )
-        if authorization != expected:
+
+        candidates: list[str] = []
+        if authorization:
+            header_value = authorization.strip()
+            candidates.append(header_value)
+            if header_value.lower().startswith("bearer "):
+                candidates.append(header_value[7:].strip())
+        if x_api_key:
+            candidates.append(x_api_key.strip())
+        if token:
+            candidates.append(token.strip())
+
+        if expected not in candidates:
             raise _api_error(status.HTTP_401_UNAUTHORIZED, "UNAUTHORIZED", "Authentication failed. Check API key.")
 
     @app.exception_handler(HTTPException)
@@ -951,6 +1061,10 @@ def create_app(bridge: XArmApiBridgeNode) -> FastAPI:
     def get_units_state() -> dict[str, Any]:
         state_obj = bridge.get_state()
         return {state_obj["unit_id"]: state_obj}
+
+    @api_v1.get("/connection-status")
+    def get_connection_status() -> dict[str, Any]:
+        return bridge.get_connection_status()
 
     @api_v1.post("/unit-tasks/start")
     @api_v1.post("/unit-task/start", include_in_schema=False)
