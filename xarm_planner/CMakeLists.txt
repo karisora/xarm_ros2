@@ -74,6 +74,15 @@ target_link_libraries(goal_pose_commander_node
   ${ament_LIBRARIES}
 )
 
+add_executable(eef_waypoint_commander_node src/eef_waypoint_commander_node.cpp)
+ament_target_dependencies(eef_waypoint_commander_node
+  ${dependencies}
+)
+target_link_libraries(eef_waypoint_commander_node
+  xarm_planner
+  ${ament_LIBRARIES}
+)
+
 add_executable(test_xarm_planner_api_joint test/test_xarm_planner_api_joint.cpp)
 ament_target_dependencies(test_xarm_planner_api_joint
   ${dependencies}
@@ -152,6 +161,7 @@ install(
   xarm_planner_node
   xarm_gripper_planner_node
   goal_pose_commander_node
+  eef_waypoint_commander_node
   test_xarm_planner_api_joint
   test_dual_xarm_planner_api_joint
   test_xarm_planner_api_pose
@@ -167,6 +177,11 @@ install(
 
 install(DIRECTORY
   launch
+  DESTINATION share/${PROJECT_NAME}/
+)
+
+install(DIRECTORY
+  config
   DESTINATION share/${PROJECT_NAME}/
 )
 

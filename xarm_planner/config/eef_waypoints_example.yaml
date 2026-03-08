@@ -1,0 +1,23 @@
+eef_waypoint_commander_node:
+  ros__parameters:
+    robot_type: xarm
+    dof: 6
+    prefix: ""
+    wait_each: true
+    # true: Cartesian interpolation between waypoints (>=2 points required)
+    # false: Pose-to-pose planning for each waypoint
+    use_cartesian: false
+    waypoint_count: 3
+    waypoints:
+      0:
+        # [x, y, z] in meters
+        position: [0.30, 0.00, 0.25]
+        # [qx, qy, qz, qw]
+        orientation: [1.0, 0.0, 0.0, 0.0]
+      1:
+        position: [0.34, 0.08, 0.26]
+        orientation: [1.0, 0.0, 0.0, 0.0]
+      2:
+        position: [0.30, -0.08, 0.26]
+        orientation: [1.0, 0.0, 0.0, 0.0]
+
