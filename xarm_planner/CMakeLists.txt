@@ -65,6 +65,15 @@ target_link_libraries(xarm_gripper_planner_node
   ${ament_LIBRARIES}
 )
 
+add_executable(goal_pose_commander_node src/goal_pose_commander_node.cpp)
+ament_target_dependencies(goal_pose_commander_node
+  ${dependencies}
+)
+target_link_libraries(goal_pose_commander_node
+  xarm_planner
+  ${ament_LIBRARIES}
+)
+
 add_executable(test_xarm_planner_api_joint test/test_xarm_planner_api_joint.cpp)
 ament_target_dependencies(test_xarm_planner_api_joint
   ${dependencies}
@@ -142,6 +151,7 @@ install(
   xarm_planner
   xarm_planner_node
   xarm_gripper_planner_node
+  goal_pose_commander_node
   test_xarm_planner_api_joint
   test_dual_xarm_planner_api_joint
   test_xarm_planner_api_pose
