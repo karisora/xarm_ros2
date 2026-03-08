@@ -6,7 +6,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 import rclpy
 import uvicorn
@@ -39,7 +39,7 @@ def _source_to_suffix(command_source: str) -> str:
     return "remote" if command_source == "upstream" else "local"
 
 
-def _api_error(status_code: int, code: str, message: str, detail: dict[str, Any] | None = None) -> HTTPException:
+def _api_error(status_code: int, code: str, message: str, detail: Optional[dict[str, Any]] = None) -> HTTPException:
     payload: dict[str, Any] = {"code": code, "message": message}
     if detail:
         payload["detail"] = detail
@@ -55,7 +55,7 @@ class StartUnitTaskPayload(BaseModel):
 
 class CommandRequest(BaseModel):
     command: str
-    target_unit: str | None = None
+    target_unit: Optional[str] = None
     command_source: str
 
 
@@ -85,7 +85,7 @@ class TaskRuntime:
     start_time: datetime
     duration_sec: float
     status: str = "running"
-    paused_at: datetime | None = None
+    paused_at: Optional[datetime] = None
     paused_total_sec: float = 0.0
     progress_percent: int = 0
 
@@ -107,7 +107,7 @@ def timedelta_seconds(seconds: float):
 
 
 class BridgeOperationError(Exception):
-    def __init__(self, code: str, message: str, *, status_code: int = 503, detail: dict[str, Any] | None = None) -> None:
+    def __init__(self, code: str, message: str, *, status_code: int = 503, detail: Optional[dict[str, Any]] = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
@@ -170,12 +170,12 @@ class XArmApiBridgeNode(Node):
         self._operation_mode = "auto"
         self._control_authority = default_authority
         self._robot_mode_enabled = False
-        self._current_task: TaskRuntime | None = None
+        self._current_task: Optional[TaskRuntime] = None
         self._task_results: dict[str, dict[str, Any]] = {}
         self._task_history: list[dict[str, Any]] = []
-        self._terminal_status: str | None = None
-        self._terminal_message: str | None = None
-        self._last_robot_msg: RobotMsg | None = None
+        self._terminal_status: Optional[str] = None
+        self._terminal_message: Optional[str] = None
+        self._last_robot_msg: Optional[RobotMsg] = None
         self._last_command_source = "gui"
         self._moves: dict[str, dict[str, Any]] = {}
 
@@ -900,7 +900,7 @@ class XArmApiBridgeNode(Node):
 def create_app(bridge: XArmApiBridgeNode) -> FastAPI:
     app = FastAPI(title="xarm_api_bridge", version="0.1.0")
 
-    def require_authorization(authorization: str | None = Header(default=None, alias="Authorization")) -> None:
+    def require_authorization(authorization: Optional[str] = Header(default=None, alias="Authorization")) -> None:
         expected = bridge.api_key
         if not expected:
             raise _api_error(
@@ -941,7 +941,7 @@ def create_app(bridge: XArmApiBridgeNode) -> FastAPI:
     api_v1 = APIRouter(prefix="/api/v1", dependencies=[Depends(require_authorization)])
 
     @api_v1.get("/state")
-    def get_state(unit_id: str | None = Query(default=None)) -> dict[str, Any]:
+    def get_state(unit_id: Optional[str] = Query(default=None)) -> dict[str, Any]:
         state_obj = bridge.get_state()
         if unit_id is not None and unit_id != state_obj["unit_id"]:
             raise _api_error(status.HTTP_404_NOT_FOUND, "UNIT_NOT_FOUND", f"unit_id not found: {unit_id}")
