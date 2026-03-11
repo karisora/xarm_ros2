@@ -2,6 +2,8 @@
 
 
 ## msg
+- [xarm_msgs::msg::ApiRequest](./msg/ApiRequest.msg)
+    - xarm_api_bridge->topic: __api_requests__
 - [xarm_msgs::msg::RobotMsg](./msg/RobotMsg.msg)
     - xarm_api->topic: __robot_states__
 - [xarm_msgs::msg::CIOState](./msg/CIOState.msg)
@@ -288,4 +290,3 @@
 ## action
 - [control_msgs::action::GripperCommand](http://docs.ros.org/en/api/control_msgs/html/action/GripperCommand.html)
     - - xarm_api->action: __xarm_gripper/gripper_action__
-

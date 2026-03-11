@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 import threading
@@ -17,7 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from xarm_msgs.msg import RobotMsg
+from xarm_msgs.msg import ApiRequest, RobotMsg
 from xarm_msgs.srv import Call, GetFloat32List, GripperMove, MoveHome, MoveJoint, SetDigitalIO, SetInt16, SetInt16ById
 
 
@@ -46,6 +47,28 @@ def _api_error(status_code: int, code: str, message: str, detail: Optional[dict[
     if detail:
         payload["detail"] = detail
     return HTTPException(status_code=status_code, detail=payload)
+
+
+def _payload_to_dict(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, BaseModel):
+        if hasattr(payload, "model_dump"):
+            return payload.model_dump()
+        return payload.dict()
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _payload_to_json(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _extract_command_name(payload: dict[str, Any]) -> str:
+    for key in ("command", "action", "control_authority", "reference", "target"):
+        value = payload.get(key)
+        if value is not None and str(value) != "":
+            return str(value)
+    return ""
 
 
 class StartUnitTaskPayload(BaseModel):
@@ -126,6 +149,7 @@ class XArmApiBridgeNode(Node):
         self.declare_parameter("api_key", os.getenv("FILTRATION_API_KEY", ""))
         self.declare_parameter("unit_id", "unit-xarm01")
         self.declare_parameter("hw_ns", "xarm")
+        self.declare_parameter("api_signal_topic", "")
         self.declare_parameter("task_duration_sec", 90.0)
         self.declare_parameter("auto_complete_task", True)
         self.declare_parameter("default_control_authority", "remote")
@@ -147,6 +171,7 @@ class XArmApiBridgeNode(Node):
         self.api_key = str(self.get_parameter("api_key").value)
         self.unit_id = str(self.get_parameter("unit_id").value)
         self.hw_ns = str(self.get_parameter("hw_ns").value).strip("/")
+        api_signal_topic = str(self.get_parameter("api_signal_topic").value).strip()
         self.task_duration_sec = float(self.get_parameter("task_duration_sec").value)
         self.auto_complete_task = bool(self.get_parameter("auto_complete_task").value)
         self.initial_pose_deg = [float(v) for v in self.get_parameter("initial_pose_deg").value]
@@ -187,6 +212,7 @@ class XArmApiBridgeNode(Node):
         self._last_comm_error_at: Optional[datetime] = None
 
         ns_prefix = f"/{self.hw_ns}" if self.hw_ns else ""
+        self.api_signal_topic = api_signal_topic or (f"{ns_prefix}/api_requests" if ns_prefix else "/api_requests")
         self._service_names = {
             "motion_enable": f"{ns_prefix}/motion_enable",
             "set_mode": f"{ns_prefix}/set_mode",
@@ -214,10 +240,32 @@ class XArmApiBridgeNode(Node):
             "set_tgpio_digital": self.create_client(SetDigitalIO, self._service_names["set_tgpio_digital"]),
         }
 
+        self._api_request_publisher = self.create_publisher(ApiRequest, self.api_signal_topic, 10)
         self.create_subscription(RobotMsg, f"{ns_prefix}/robot_states", self._on_robot_state, 10)
         self.get_logger().info(
-            f"xarm_api_bridge started: ns=/{self.hw_ns}, api={self.api_host}:{self.api_port}, unit_id={self.unit_id}"
+            "xarm_api_bridge started: "
+            f"ns=/{self.hw_ns}, api={self.api_host}:{self.api_port}, unit_id={self.unit_id}, "
+            f"api_signal_topic={self.api_signal_topic}"
         )
+
+    def publish_api_request(self, endpoint: str, event_type: str, payload: Any) -> None:
+        payload_dict = _payload_to_dict(payload)
+        msg = ApiRequest()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.unit_id = self.unit_id
+        msg.api_endpoint = endpoint
+        msg.event_type = event_type
+        msg.request_id = uuid.uuid4().hex
+        msg.command_source = str(payload_dict.get("command_source", ""))
+        msg.target_unit = str(payload_dict.get("target_unit", ""))
+        msg.job_id = str(payload_dict.get("job_id", ""))
+        msg.unit_task_id = str(payload_dict.get("unit_task_id", ""))
+        msg.command_name = _extract_command_name(payload_dict)
+        msg.payload_json = _payload_to_json(payload_dict)
+        try:
+            self._api_request_publisher.publish(msg)
+        except Exception as error:  # noqa: BLE001
+            self.get_logger().warning(f"failed to publish API request event: {error}")
 
     def _on_robot_state(self, msg: RobotMsg) -> None:
         with self._lock:
@@ -1069,32 +1117,39 @@ def create_app(bridge: XArmApiBridgeNode) -> FastAPI:
     @api_v1.post("/unit-tasks/start")
     @api_v1.post("/unit-task/start", include_in_schema=False)
     def start_task(payload: StartUnitTaskPayload) -> dict[str, Any]:
+        bridge.publish_api_request("/api/v1/unit-tasks/start", "unit_task_start", payload)
         return bridge.start_unit_task(payload)
 
     @api_v1.post("/commands", status_code=status.HTTP_204_NO_CONTENT)
     def post_commands(payload: CommandRequest) -> Response:
+        bridge.publish_api_request("/api/v1/commands", "command", payload)
         bridge.send_command(payload)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @api_v1.post("/manual-commands")
     def manual_commands(payload: dict[str, Any]) -> dict[str, Any]:
+        bridge.publish_api_request("/api/v1/manual-commands", "manual_command", payload)
         return bridge.send_manual_command(payload)
 
     @api_v1.post("/robot/enable")
     def robot_enable(payload: RobotEnableRequest) -> dict[str, Any]:
+        bridge.publish_api_request("/api/v1/robot/enable", "robot_enable", payload)
         return bridge.enable_robot(payload)
 
     @api_v1.post("/control-authority", status_code=status.HTTP_204_NO_CONTENT)
     def control_authority(payload: ControlAuthorityRequest) -> Response:
+        bridge.publish_api_request("/api/v1/control-authority", "control_authority", payload)
         bridge.set_control_authority(payload.control_authority)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @api_v1.post("/arm/pose-check")
     def arm_pose_check(payload: ArmPoseCheckRequest) -> dict[str, Any]:
+        bridge.publish_api_request("/api/v1/arm/pose-check", "arm_pose_check", payload)
         return bridge.check_pose(payload)
 
     @api_v1.post("/arm/move-initial-pose")
     def arm_move_initial_pose(payload: ArmMoveInitialPoseRequest) -> dict[str, Any]:
+        bridge.publish_api_request("/api/v1/arm/move-initial-pose", "arm_move_initial_pose", payload)
         if payload.target != "sequence_start":
             raise _api_error(status.HTTP_400_BAD_REQUEST, "INVALID_REFERENCE", "target must be sequence_start")
         move_id = bridge.start_move_to_initial_pose()
@@ -1110,6 +1165,7 @@ def create_app(bridge: XArmApiBridgeNode) -> FastAPI:
 
     @api_v1.post("/unit-tasks/search")
     def search_tasks(payload: dict[str, Any]) -> dict[str, Any]:
+        bridge.publish_api_request("/api/v1/unit-tasks/search", "unit_task_search", payload)
         from_iso = payload.get("from")
         to_iso = payload.get("to")
         if not isinstance(from_iso, str) or not isinstance(to_iso, str):

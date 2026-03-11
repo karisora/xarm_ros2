@@ -37,6 +37,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 set(msg_files
+  "msg/ApiRequest.msg"
   "msg/RobotMsg.msg"
   "msg/IOState.msg"
   "msg/CIOState.msg"

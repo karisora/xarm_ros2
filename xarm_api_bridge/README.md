@@ -55,6 +55,16 @@
 
 状態監視には `/xarm/robot_states` を購読します。
 
+## API信号のtopic publish
+
+API で受信した制御要求は、専用メッセージ `xarm_msgs/msg/ApiRequest` に変換して topic publish されます。
+
+- 既定 topic: `/xarm/api_requests` (`hw_ns` が空の場合は `/api_requests`)
+- 上書きパラメータ: `api_signal_topic`
+- publish 対象: `/api/v1` 配下の主要 `POST` API
+
+メッセージには `unit_id`, `api_endpoint`, `event_type`, `command_source`, `job_id`, `unit_task_id`, `command_name`, `payload_json` などが入ります。`payload_json` には受信した API payload 全体を JSON 文字列で格納します。
+
 ## 前提
 
 `xarm_api` 側で利用するサービスを有効化しておく必要があります。最低限、以下は `true` 推奨です。
@@ -86,7 +96,8 @@ ros2 launch xarm_api_bridge xarm_api_bridge.launch.py \
   api_port:=8000 \
   api_key:=your_api_key \
   unit_id:=unit-mys01 \
-  hw_ns:=xarm
+  hw_ns:=xarm \
+  api_signal_topic:=/xarm/api_requests
 ```
 
 または環境変数でも指定可能です。
@@ -103,6 +114,7 @@ ros2 run xarm_api_bridge xarm_api_bridge_server
 - `api_key` (string, default: `""`)
 - `unit_id` (string, default: `unit-xarm01`)
 - `hw_ns` (string, default: `xarm`)
+- `api_signal_topic` (string, default: `""`)
 - `task_duration_sec` (float, default: `90.0`)
 - `initial_pose_deg` (double[], default: `[0,-30,0,0,30,0]`)
 - `move_joint_speed` (float, default: `0.5`)

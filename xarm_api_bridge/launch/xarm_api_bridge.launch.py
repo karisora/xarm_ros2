@@ -13,6 +13,7 @@ def generate_launch_description():
         DeclareLaunchArgument("api_key", default_value=""),
         DeclareLaunchArgument("unit_id", default_value="unit-xarm01"),
         DeclareLaunchArgument("hw_ns", default_value="xarm"),
+        DeclareLaunchArgument("api_signal_topic", default_value=""),
         DeclareLaunchArgument("task_duration_sec", default_value="90.0"),
     ]
 
@@ -29,10 +30,10 @@ def generate_launch_description():
                 "api_key": LaunchConfiguration("api_key"),
                 "unit_id": LaunchConfiguration("unit_id"),
                 "hw_ns": LaunchConfiguration("hw_ns"),
+                "api_signal_topic": LaunchConfiguration("api_signal_topic"),
                 "task_duration_sec": LaunchConfiguration("task_duration_sec"),
             }
         ],
     )
 
     return LaunchDescription(declared_arguments + [bridge_node])
-
