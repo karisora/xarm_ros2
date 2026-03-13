@@ -16,6 +16,8 @@
   FastAPI ベースの HTTP API サーバです。外部リクエストを受け取り、ROS 2 サービス呼び出しと `ApiRequest` の publish を行います。
 - `master_controller`:
   `ApiRequest` を subscribe し、手動モード切替要求を監視します。必要に応じて `/xarm/set_mode`、`/xarm/set_state`、`/xarm/motion_enable` を疑似的に提供できます。
+- `autonomous_controller`:
+  `ApiRequest` の `unit_task_start` と `pause/resume/stop` を subscribe し、GUI の工程時間データにもとづく自動シーケンスを実行します。
 
 ## アーキテクチャ
 ### API ブリッジから ROS 2 へのデータフロー
@@ -167,9 +169,20 @@ load_controller:=true
 - `hw_ns` default: `xarm`
 - `emulate_mode_services` default: `true`
 
+### autonomous_controller
+
+- `api_signal_topic` default: `/xarm/api_requests`
+- `unit_id_filter` default: `""`
+- `hw_ns` default: `xarm`
+- `enable_robot_on_start` default: `false`
+- `set_auto_mode_on_start` default: `true`
+- `set_ready_state_on_start` default: `true`
+- `move_home_on_start` default: `false`
+
 ## 関連ドキュメント
 
 - [xarm_api_bridge/README.md](./xarm_api_bridge/README.md)
 - [master_controller/README.md](./master_controller/README.md)
+- [autonomous_controller/README.md](./autonomous_controller/README.md)
 - [xarm_api/ReadMe.md](./xarm_api/ReadMe.md)
 - [xarm_msgs/ReadMe.md](./xarm_msgs/ReadMe.md)

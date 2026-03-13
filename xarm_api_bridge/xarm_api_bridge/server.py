@@ -4,6 +4,7 @@ import json
 import math
 import os
 import threading
+import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
@@ -166,6 +167,10 @@ class XArmApiBridgeNode(Node):
         self.declare_parameter("manual_waste_io", -1)
         self.declare_parameter("manual_servo_io", -1)
         self.declare_parameter("auto_set_mode_state_on_enable", True)
+        self.declare_parameter("auto_ready_on_startup", True)
+        self.declare_parameter("auto_ready_delay_sec", 1.0)
+        self.declare_parameter("auto_ready_max_attempts", 10)
+        self.declare_parameter("auto_ready_retry_interval_sec", 2.0)
 
         self.api_host = str(self.get_parameter("api_host").value)
         self.api_port = int(self.get_parameter("api_port").value)
@@ -190,6 +195,13 @@ class XArmApiBridgeNode(Node):
         self.manual_waste_io = int(self.get_parameter("manual_waste_io").value)
         self.manual_servo_io = int(self.get_parameter("manual_servo_io").value)
         self.auto_set_mode_state_on_enable = bool(self.get_parameter("auto_set_mode_state_on_enable").value)
+        self.auto_ready_on_startup = bool(self.get_parameter("auto_ready_on_startup").value)
+        self.auto_ready_delay_sec = max(0.0, float(self.get_parameter("auto_ready_delay_sec").value))
+        self.auto_ready_max_attempts = max(1, int(self.get_parameter("auto_ready_max_attempts").value))
+        self.auto_ready_retry_interval_sec = max(
+            0.1,
+            float(self.get_parameter("auto_ready_retry_interval_sec").value),
+        )
 
         default_authority = str(self.get_parameter("default_control_authority").value)
         if default_authority not in ("local", "remote"):
@@ -212,6 +224,7 @@ class XArmApiBridgeNode(Node):
         self._comm_results: Deque[Tuple[datetime, bool]] = deque()
         self._last_comm_error: Optional[str] = None
         self._last_comm_error_at: Optional[datetime] = None
+        self._startup_auto_ready_thread: Optional[threading.Thread] = None
 
         ns_prefix = f"/{self.hw_ns}" if self.hw_ns else ""
         self.api_signal_topic = api_signal_topic or (f"{ns_prefix}/api_requests" if ns_prefix else "/api_requests")
@@ -249,6 +262,13 @@ class XArmApiBridgeNode(Node):
             f"ns=/{self.hw_ns}, api={self.api_host}:{self.api_port}, unit_id={self.unit_id}, "
             f"api_signal_topic={self.api_signal_topic}"
         )
+        if self.auto_ready_on_startup:
+            self._startup_auto_ready_thread = threading.Thread(
+                target=self._run_startup_auto_ready,
+                name="xarm-api-bridge-auto-ready",
+                daemon=True,
+            )
+            self._startup_auto_ready_thread.start()
 
     def publish_api_request(self, endpoint: str, event_type: str, payload: Any) -> None:
         payload_dict = _payload_to_dict(payload)
@@ -486,6 +506,40 @@ class XArmApiBridgeNode(Node):
                 "set_tgpio_digital failed",
                 detail={"ret": int(res.ret), "message": str(res.message), "ionum": ionum, "value": value},
             )
+
+    def _run_startup_auto_ready(self) -> None:
+        if self.auto_ready_delay_sec > 0.0:
+            time.sleep(self.auto_ready_delay_sec)
+
+        for attempt in range(1, self.auto_ready_max_attempts + 1):
+            if not rclpy.ok():
+                return
+            try:
+                self.get_logger().info(
+                    "startup auto-ready attempt "
+                    f"{attempt}/{self.auto_ready_max_attempts}: enabling robot and setting auto/ready state"
+                )
+                self._enable_robot()
+                self._set_mode(0)
+                self._set_state(0)
+                with self._lock:
+                    self._operation_mode = "auto"
+                    self._robot_mode_enabled = True
+                    self._terminal_status = None
+                    self._terminal_message = None
+                self.get_logger().info("startup auto-ready completed successfully")
+                return
+            except Exception as error:  # noqa: BLE001
+                self.get_logger().warning(
+                    "startup auto-ready failed on attempt "
+                    f"{attempt}/{self.auto_ready_max_attempts}: {error}"
+                )
+                if attempt >= self.auto_ready_max_attempts:
+                    self.get_logger().warning(
+                        "startup auto-ready exhausted retries; bridge will continue without ready state"
+                    )
+                    return
+                time.sleep(self.auto_ready_retry_interval_sec)
 
     def _get_joint_angles_deg(self) -> list[float]:
         res = self._call_service("get_servo_angle", GetFloat32List.Request(), timeout_sec=5.0)
@@ -1123,42 +1177,46 @@ def create_app(bridge: XArmApiBridgeNode) -> FastAPI:
     @api_v1.post("/unit-tasks/start")
     @api_v1.post("/unit-task/start", include_in_schema=False)
     def start_task(payload: StartUnitTaskPayload) -> dict[str, Any]:
+        result = bridge.start_unit_task(payload)
         bridge.publish_api_request("/api/v1/unit-tasks/start", "unit_task_start", payload)
-        return bridge.start_unit_task(payload)
+        return result
 
     @api_v1.post("/commands", status_code=status.HTTP_204_NO_CONTENT)
     def post_commands(payload: CommandRequest) -> Response:
-        bridge.publish_api_request("/api/v1/commands", "command", payload)
         bridge.send_command(payload)
+        bridge.publish_api_request("/api/v1/commands", "command", payload)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @api_v1.post("/manual-commands")
     def manual_commands(payload: dict[str, Any]) -> dict[str, Any]:
+        result = bridge.send_manual_command(payload)
         bridge.publish_api_request("/api/v1/manual-commands", "manual_command", payload)
-        return bridge.send_manual_command(payload)
+        return result
 
     @api_v1.post("/robot/enable")
     def robot_enable(payload: RobotEnableRequest) -> dict[str, Any]:
+        result = bridge.enable_robot(payload)
         bridge.publish_api_request("/api/v1/robot/enable", "robot_enable", payload)
-        return bridge.enable_robot(payload)
+        return result
 
     @api_v1.post("/control-authority", status_code=status.HTTP_204_NO_CONTENT)
     def control_authority(payload: ControlAuthorityRequest) -> Response:
-        bridge.publish_api_request("/api/v1/control-authority", "control_authority", payload)
         bridge.set_control_authority(payload.control_authority)
+        bridge.publish_api_request("/api/v1/control-authority", "control_authority", payload)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @api_v1.post("/arm/pose-check")
     def arm_pose_check(payload: ArmPoseCheckRequest) -> dict[str, Any]:
+        result = bridge.check_pose(payload)
         bridge.publish_api_request("/api/v1/arm/pose-check", "arm_pose_check", payload)
-        return bridge.check_pose(payload)
+        return result
 
     @api_v1.post("/arm/move-initial-pose")
     def arm_move_initial_pose(payload: ArmMoveInitialPoseRequest) -> dict[str, Any]:
-        bridge.publish_api_request("/api/v1/arm/move-initial-pose", "arm_move_initial_pose", payload)
         if payload.target != "sequence_start":
             raise _api_error(status.HTTP_400_BAD_REQUEST, "INVALID_REFERENCE", "target must be sequence_start")
         move_id = bridge.start_move_to_initial_pose()
+        bridge.publish_api_request("/api/v1/arm/move-initial-pose", "arm_move_initial_pose", payload)
         return {"accepted": True, "move_id": move_id, "message": "move accepted"}
 
     @api_v1.get("/arm/move-status/{move_id}")

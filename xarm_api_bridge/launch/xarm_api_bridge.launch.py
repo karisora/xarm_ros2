@@ -16,6 +16,10 @@ def generate_launch_description():
         DeclareLaunchArgument("api_signal_topic", default_value=""),
         DeclareLaunchArgument("task_duration_sec", default_value="90.0"),
         DeclareLaunchArgument("manual_gripper_via_topic", default_value="false"),
+        DeclareLaunchArgument("auto_ready_on_startup", default_value="true"),
+        DeclareLaunchArgument("auto_ready_delay_sec", default_value="1.0"),
+        DeclareLaunchArgument("auto_ready_max_attempts", default_value="10"),
+        DeclareLaunchArgument("auto_ready_retry_interval_sec", default_value="2.0"),
     ]
 
     bridge_node = Node(
@@ -34,6 +38,10 @@ def generate_launch_description():
                 "api_signal_topic": LaunchConfiguration("api_signal_topic"),
                 "task_duration_sec": LaunchConfiguration("task_duration_sec"),
                 "manual_gripper_via_topic": LaunchConfiguration("manual_gripper_via_topic"),
+                "auto_ready_on_startup": LaunchConfiguration("auto_ready_on_startup"),
+                "auto_ready_delay_sec": LaunchConfiguration("auto_ready_delay_sec"),
+                "auto_ready_max_attempts": LaunchConfiguration("auto_ready_max_attempts"),
+                "auto_ready_retry_interval_sec": LaunchConfiguration("auto_ready_retry_interval_sec"),
             }
         ],
     )

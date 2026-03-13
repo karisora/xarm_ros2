@@ -31,6 +31,7 @@ def generate_launch_description():
     initial_pose_goal_time = LaunchConfiguration("initial_pose_goal_time")
     initial_pose_wait_timeout = LaunchConfiguration("initial_pose_wait_timeout")
     launch_manual_controller = LaunchConfiguration("launch_manual_controller")
+    launch_autonomous_controller = LaunchConfiguration("launch_autonomous_controller")
     api_signal_topic = LaunchConfiguration("api_signal_topic")
     gripper_controller_name = LaunchConfiguration("gripper_controller_name")
     gripper_joint_name = LaunchConfiguration("gripper_joint_name")
@@ -57,6 +58,17 @@ def generate_launch_description():
             "manual_mode_topic": manual_mode_topic,
         }.items(),
         condition=IfCondition(launch_manual_controller),
+    )
+
+    autonomous_controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([FindPackageShare("autonomous_controller"), "launch", "autonomous_controller.launch.py"])
+        ),
+        launch_arguments={
+            "api_signal_topic": api_signal_topic,
+            "hw_ns": hw_ns,
+        }.items(),
+        condition=IfCondition(launch_autonomous_controller),
     )
 
     scene_loader = ExecuteProcess(
@@ -115,12 +127,14 @@ def generate_launch_description():
             DeclareLaunchArgument("initial_pose_goal_time", default_value="3.0"),
             DeclareLaunchArgument("initial_pose_wait_timeout", default_value="15.0"),
             DeclareLaunchArgument("launch_manual_controller", default_value="false"),
+            DeclareLaunchArgument("launch_autonomous_controller", default_value="true"),
             DeclareLaunchArgument("api_signal_topic", default_value="/xarm/api_requests"),
             DeclareLaunchArgument("gripper_controller_name", default_value="xarm_gripper_traj_controller"),
             DeclareLaunchArgument("gripper_joint_name", default_value="drive_joint"),
             DeclareLaunchArgument("manual_mode_topic", default_value="/xarm/manual_mode_active"),
             base_launch,
             manual_controller_launch,
+            autonomous_controller_launch,
             delayed_initial_pose_loader,
             delayed_scene_loader,
         ]

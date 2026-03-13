@@ -97,7 +97,8 @@ ros2 launch xarm_api_bridge xarm_api_bridge.launch.py \
   api_key:=your_api_key \
   unit_id:=unit-mys01 \
   hw_ns:=xarm \
-  api_signal_topic:=/xarm/api_requests
+  api_signal_topic:=/xarm/api_requests \
+  auto_ready_on_startup:=true
 ```
 
 または環境変数でも指定可能です。
@@ -122,3 +123,13 @@ ros2 run xarm_api_bridge xarm_api_bridge_server
 - `object_centrifuge_tube_rack_installed` (bool, default: `true`)
 - `object_funnel_rack_installed` (bool, default: `true`)
 - `manual_pump_io` / `manual_waste_io` / `manual_servo_io` (int, default: `-1`)
+- `auto_ready_on_startup` (bool, default: `true`)
+- `auto_ready_delay_sec` (float, default: `1.0`)
+- `auto_ready_max_attempts` (int, default: `10`)
+- `auto_ready_retry_interval_sec` (float, default: `2.0`)
+
+## 起動時 auto-ready
+
+`auto_ready_on_startup:=true` のとき、bridge は起動後に `/xarm/motion_enable`、`/xarm/set_mode(0)`、`/xarm/set_state(0)` を順に試行します。失敗時はリトライし、成功すると GUI から見た `robot_mode_enabled=true` と `status=standby` に入りやすくなります。
+
+特に `master_controller` が `/xarm/motion_enable`、`/xarm/set_mode`、`/xarm/set_state` を疑似提供している構成では、`filtration-app` の「生産開始」ボタンを有効化する助けになります。
