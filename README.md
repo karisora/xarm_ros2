@@ -94,20 +94,22 @@
 
 ## セットアップ
 
-### 1. ROS 2 ワークスペースのビルド
+### 1. Dockerの構築
 
+権限付与
 ```bash
-cd ~/dev_ws
-source /opt/ros/$ROS_DISTRO/setup.bash
-colcon build --symlink-install
-source install/setup.bash
+xhost +local:root
 ```
 
-必要に応じて `rosdep` も先に実行してください。
-
+Docker build
 ```bash
-cd ~/dev_ws
-rosdep install --from-paths src --ignore-src -r -y
+docker build -t xarm_ros2:humble .
+```
+
+
+Docker run
+```bash
+docker run -it --rm \ --name xarm_gzclassic \ --net=host \ -e DISPLAY=$DISPLAY \ -v /tmp/.X11-unix:/tmp/.X11-unix:rw \ xarm_ros2:humble bash
 ```
 
 ### 2. 実機接続に必要な前提
