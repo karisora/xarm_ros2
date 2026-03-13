@@ -15,6 +15,7 @@ def generate_launch_description():
         DeclareLaunchArgument("hw_ns", default_value="xarm"),
         DeclareLaunchArgument("api_signal_topic", default_value=""),
         DeclareLaunchArgument("task_duration_sec", default_value="90.0"),
+        DeclareLaunchArgument("manual_gripper_via_topic", default_value="false"),
     ]
 
     bridge_node = Node(
@@ -32,6 +33,7 @@ def generate_launch_description():
                 "hw_ns": LaunchConfiguration("hw_ns"),
                 "api_signal_topic": LaunchConfiguration("api_signal_topic"),
                 "task_duration_sec": LaunchConfiguration("task_duration_sec"),
+                "manual_gripper_via_topic": LaunchConfiguration("manual_gripper_via_topic"),
             }
         ],
     )

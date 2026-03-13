@@ -161,6 +161,7 @@ class XArmApiBridgeNode(Node):
         self.declare_parameter("object_funnel_rack_installed", True)
         self.declare_parameter("gripper_open_pos", 850.0)
         self.declare_parameter("gripper_close_pos", 0.0)
+        self.declare_parameter("manual_gripper_via_topic", False)
         self.declare_parameter("manual_pump_io", -1)
         self.declare_parameter("manual_waste_io", -1)
         self.declare_parameter("manual_servo_io", -1)
@@ -184,6 +185,7 @@ class XArmApiBridgeNode(Node):
         self.object_funnel_rack_installed = bool(self.get_parameter("object_funnel_rack_installed").value)
         self.gripper_open_pos = float(self.get_parameter("gripper_open_pos").value)
         self.gripper_close_pos = float(self.get_parameter("gripper_close_pos").value)
+        self.manual_gripper_via_topic = bool(self.get_parameter("manual_gripper_via_topic").value)
         self.manual_pump_io = int(self.get_parameter("manual_pump_io").value)
         self.manual_waste_io = int(self.get_parameter("manual_waste_io").value)
         self.manual_servo_io = int(self.get_parameter("manual_servo_io").value)
@@ -837,6 +839,11 @@ class XArmApiBridgeNode(Node):
             state = str(payload.get("state", ""))
             if state not in ("open", "close"):
                 return {"accepted": False, "message": "gripper state must be open/close"}
+            if self.manual_gripper_via_topic:
+                return {
+                    "accepted": True,
+                    "message": f"gripper {state} delegated to topic subscriber",
+                }
             self._set_gripper(state)
             return {"accepted": True, "message": f"gripper {state}"}
 
