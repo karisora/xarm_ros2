@@ -115,87 +115,31 @@ Docker run
 docker run -it --rm \ --name xarm_gzclassic \ --net=host \ -e DISPLAY=$DISPLAY \ -v /tmp/.X11-unix:/tmp/.X11-unix:rw \ xarm_ros2:humble bash
 ```
 
-### 2. 実機接続に必要な前提
 
-- xArm 本体の IP アドレスが分かっていること
-- `xarm_api` 側で必要なサービスが有効になっていること
-- FastAPI / Uvicorn が利用できること
+## 起動手順, 仮
+### gazebo
 
-## 起動手順
-
-### 実機を使う場合
-
-1. xArm ドライバを起動
+1. master nodeを起動
 
 ```bash
-source ~/dev_ws/install/setup.bash
-ros2 launch xarm_api xarm6_driver.launch.py robot_ip:=192.168.1.225 hw_ns:=xarm
+ros2 launch master_controller master_controller.launch.py
 ```
 
 2. API ブリッジを起動
 
 ```bash
-source ~/dev_ws/install/setup.bash
-ros2 launch xarm_api_bridge xarm_api_bridge.launch.py \
-  api_host:=127.0.0.1 \
-  api_port:=8000 \
-  api_key:=your_api_key \
-  unit_id:=unit-xarm01 \
-  hw_ns:=xarm \
-  api_signal_topic:=/xarm/api_requests
+ros2 launch xarm_api_bridge xarm_api_bridge.launch.py api_host:=127.0.0.1 api_port:=8000 api_key:=MQWGUB1GA9rOaLCxkCGe4j4LE5cdcSxk unit_id:=unit-mys01 hw_ns:=xarm
 ```
 
-3. 必要なら `master_controller` を起動
+3. xarm simulationを起動
 
 ```bash
-source ~/dev_ws/install/setup.bash
-ros2 launch master_controller master_controller.launch.py \
-  api_signal_topic:=/xarm/api_requests \
-  hw_ns:=xarm
+ros2 launch xarm_moveit_config xarm6_moveit_gazebo_with_field.launch.py \
+robot_type:=xarm dof:=6 add_gripper:=true \
+load_controller:=true
+
 ```
 
-### 実機なしで API フローだけ確認する場合
-
-`master_controller` は `/xarm/motion_enable`、`/xarm/set_mode`、`/xarm/set_state` を疑似的に提供できます。
-
-```bash
-source ~/dev_ws/install/setup.bash
-ros2 launch master_controller master_controller.launch.py emulate_mode_services:=true
-```
-
-その後、別ターミナルで API ブリッジを起動します。
-
-```bash
-source ~/dev_ws/install/setup.bash
-export FILTRATION_API_KEY=your_api_key
-ros2 run xarm_api_bridge xarm_api_bridge_server
-```
-
-## 動作確認例
-
-### API サーバの疎通確認
-
-```bash
-curl http://127.0.0.1:8000/status
-```
-
-### 手動モード要求を送る例
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/manual-commands \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your_api_key" \
-  -d '{"action":"arm_mode","mode":"manual","command_source":"gui"}'
-```
-
-このリクエストを送ると、`xarm_api_bridge` は `/xarm/api_requests` に `ApiRequest` を publish し、`master_controller` 側で manual モード要求として解釈されます。
-
-### 接続状態の確認
-
-```bash
-curl http://127.0.0.1:8000/api/v1/connection-status \
-  -H "X-API-Key: your_api_key"
-```
 
 ## 主なパラメータ
 
