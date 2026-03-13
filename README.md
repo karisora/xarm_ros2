@@ -1,54 +1,36 @@
 # xarm_ros2
 
-このリポジトリは、xArm 用 ROS 2 ワークスペースに、HTTP API から ROS 2 サービス/トピックへ接続するための独自ブリッジを追加した構成です。  
-フロントエンドや外部 API クライアントからの要求を `xarm_api_bridge` が受け取り、ROS 2 上の `xarm_api` と `master_controller` に橋渡しします。
+このリポジトリは、xarm2のドライバー群、IKパッケージおよびモータードライバや真空ポンプなどのIO機器ドライバも含めることを想定したROS2ベースのバックエンドパッケージです。
+このパッケージはDockerで構築することを前提にしています。モータードライバなどのドライバ群はsrc内に新しくディレクトリを作成してもらうことを想定しています。
+
 
 ## 構成概要
 
 主に以下のパッケージを使います。
 
-- `xarm_api`
+- `xarm_api`:
   xArm 本体を操作する ROS 2 サービス群を提供します。
-- `xarm_msgs`
+- `xarm_msgs`:
   `ApiRequest` や `RobotMsg` など、ブリッジと制御ノードで使うメッセージ/サービス定義を提供します。
-- `xarm_api_bridge`
+- `xarm_api_bridge`:
   FastAPI ベースの HTTP API サーバです。外部リクエストを受け取り、ROS 2 サービス呼び出しと `ApiRequest` の publish を行います。
-- `master_controller`
+- `master_controller`:
   `ApiRequest` を subscribe し、手動モード切替要求を監視します。必要に応じて `/xarm/set_mode`、`/xarm/set_state`、`/xarm/motion_enable` を疑似的に提供できます。
 
-## 何ができるか
-
-- HTTP API から xArm の有効化、モード切替、ホーム移動、初期姿勢移動を実行
-- API リクエスト内容を ROS 2 topic に流して、他ノード側でイベントとして利用
-- `/xarm/robot_states` を監視して API 側で接続状態を可視化
-- 実機がない構成でも `master_controller` の擬似サービスで API フローを確認
-
 ## アーキテクチャ
-
 ### API ブリッジから ROS 2 へのデータフロー
-
-```mermaid
-flowchart LR
-    A[Frontend / External Client] -->|HTTP REST<br/>/api/v1/*| B[xarm_api_bridge<br/>FastAPI + rclpy]
-
-    subgraph ROS2[ROS 2 Graph]
-        B -->|publish<br/>/xarm/api_requests<br/>xarm_msgs/ApiRequest| C[master_controller]
-        B -->|optional emulated services<br/>/xarm/set_mode<br/>/xarm/set_state<br/>/xarm/motion_enable| C
-        B -->|call ROS 2 services| D[xarm_api]
-        D -->|ROS 2 services| E[xArm Controller / Robot]
-        E -->|state feedback| D
-        D -->|publish<br/>/xarm/robot_states<br/>xarm_msgs/RobotMsg| B
-    end
-```
+<img width="414" height="461" alt="スクリーンショット 2026-03-13 13 46 28" src="https://github.com/user-attachments/assets/3aa0f54a-1f34-492c-a518-bac58c3245ed" />
 
 ### 制御パスの考え方
 
 1. 外部クライアントが `xarm_api_bridge` の HTTP API を呼びます。
 2. `xarm_api_bridge` は受けた payload を `xarm_msgs/msg/ApiRequest` に変換し、`/xarm/api_requests` へ publish します。
 3. 同時に必要な操作は `/xarm/set_mode` や `/xarm/motion_enable` などの ROS 2 サービスを呼び出します。
-4. `master_controller` は `ApiRequest` を受け取り、`manual` / `auto` 切替要求などを監視します。テスト用途では一部サービスの疑似受け口にもなれます。
+4. `master_controller` は `ApiRequest` を受け取り、`マニュアルモード` / `オートメーションモード` 切替要求などを監視します。テスト用途では一部サービスの疑似受け口にもなれます。
 5. `xarm_api` は xArm ドライバとして実機へコマンドを送り、状態を `/xarm/robot_states` で返します。
 6. `xarm_api_bridge` はその状態を見て、接続状態 API や各操作結果に反映します。
+7. `manual_controller`と`autonomous_controller`のそれぞれは`master_controller`により切り替えられる。
+8. 例えば自動シーケンス時は`autonomous_controller`が呼び出されそれぞれのシーケンスに応じてアームやモーターなどの動作命令を行います。動作命令は基本的にはROS2 topicをメインで利用し,statusや状態管理を行います。
 
 ## 主要インタフェース
 
@@ -74,6 +56,8 @@ flowchart LR
 
 - `/xarm/api_requests`
   型: `xarm_msgs/msg/ApiRequest`
+  
+詳細はxarm_msgs内で記述
 
 主なフィールド:
 
