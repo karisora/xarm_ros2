@@ -16,6 +16,7 @@ def generate_launch_description():
         DeclareLaunchArgument("open_position", default_value="0.0"),
         DeclareLaunchArgument("close_position", default_value="0.85"),
         DeclareLaunchArgument("command_duration_sec", default_value="1.0"),
+        DeclareLaunchArgument("manual_mode_topic", default_value="/xarm/manual_mode_active"),
     ]
 
     node = Node(
@@ -34,6 +35,7 @@ def generate_launch_description():
                 "open_position": LaunchConfiguration("open_position"),
                 "close_position": LaunchConfiguration("close_position"),
                 "command_duration_sec": LaunchConfiguration("command_duration_sec"),
+                "manual_mode_topic": LaunchConfiguration("manual_mode_topic"),
             }
         ],
     )

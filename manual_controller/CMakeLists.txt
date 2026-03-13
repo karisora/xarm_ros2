@@ -7,6 +7,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(xarm_msgs REQUIRED)
 
@@ -14,6 +15,7 @@ add_executable(manual_controller_node src/manual_controller_node.cpp)
 ament_target_dependencies(
   manual_controller_node
   rclcpp
+  std_msgs
   trajectory_msgs
   xarm_msgs
 )

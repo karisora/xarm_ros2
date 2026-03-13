@@ -273,8 +273,6 @@ class XArmApiBridgeNode(Node):
         with self._lock:
             self._last_robot_msg = msg
             self._last_robot_state_at = _now_local()
-            # mt_able bitmask > 0 means at least one joint is enabled
-            self._robot_mode_enabled = bool(msg.mt_able)
             self._record_comm_probe_locked(success=True)
 
     def _record_comm_probe_locked(self, success: bool, error_message: Optional[str] = None) -> None:
@@ -832,6 +830,7 @@ class XArmApiBridgeNode(Node):
                 self._set_state(0)
                 with self._lock:
                     self._operation_mode = "manual"
+                    self._robot_mode_enabled = False
                 return {"accepted": True, "message": "arm_mode set to manual"}
             return {"accepted": False, "message": "invalid mode"}
 

@@ -12,6 +12,7 @@ def generate_launch_description():
         DeclareLaunchArgument("unit_id_filter", default_value=""),
         DeclareLaunchArgument("hw_ns", default_value="xarm"),
         DeclareLaunchArgument("emulate_mode_services", default_value="true"),
+        DeclareLaunchArgument("manual_mode_topic", default_value=""),
     ]
 
     node = Node(
@@ -26,6 +27,7 @@ def generate_launch_description():
                 "unit_id_filter": LaunchConfiguration("unit_id_filter"),
                 "hw_ns": LaunchConfiguration("hw_ns"),
                 "emulate_mode_services": LaunchConfiguration("emulate_mode_services"),
+                "manual_mode_topic": LaunchConfiguration("manual_mode_topic"),
             }
         ],
     )

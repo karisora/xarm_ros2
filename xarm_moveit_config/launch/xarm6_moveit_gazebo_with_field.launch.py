@@ -34,6 +34,7 @@ def generate_launch_description():
     api_signal_topic = LaunchConfiguration("api_signal_topic")
     gripper_controller_name = LaunchConfiguration("gripper_controller_name")
     gripper_joint_name = LaunchConfiguration("gripper_joint_name")
+    manual_mode_topic = LaunchConfiguration("manual_mode_topic")
 
     base_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -53,6 +54,7 @@ def generate_launch_description():
             "api_signal_topic": api_signal_topic,
             "gripper_controller_name": gripper_controller_name,
             "gripper_joint_name": gripper_joint_name,
+            "manual_mode_topic": manual_mode_topic,
         }.items(),
         condition=IfCondition(launch_manual_controller),
     )
@@ -116,6 +118,7 @@ def generate_launch_description():
             DeclareLaunchArgument("api_signal_topic", default_value="/xarm/api_requests"),
             DeclareLaunchArgument("gripper_controller_name", default_value="xarm_gripper_traj_controller"),
             DeclareLaunchArgument("gripper_joint_name", default_value="drive_joint"),
+            DeclareLaunchArgument("manual_mode_topic", default_value="/xarm/manual_mode_active"),
             base_launch,
             manual_controller_launch,
             delayed_initial_pose_loader,

@@ -5,6 +5,8 @@ from typing import Any
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_msgs.msg import Bool
 from xarm_msgs.msg import ApiRequest
 from xarm_msgs.srv import SetInt16, SetInt16ById
 
@@ -17,27 +19,35 @@ class MasterControllerNode(Node):
         self.declare_parameter("unit_id_filter", "")
         self.declare_parameter("hw_ns", "xarm")
         self.declare_parameter("emulate_mode_services", True)
+        self.declare_parameter("manual_mode_topic", "")
 
         self.api_signal_topic = str(self.get_parameter("api_signal_topic").value)
         self.unit_id_filter = str(self.get_parameter("unit_id_filter").value).strip()
         self.hw_ns = str(self.get_parameter("hw_ns").value).strip("/")
         self.emulate_mode_services = bool(self.get_parameter("emulate_mode_services").value)
+        manual_mode_topic = str(self.get_parameter("manual_mode_topic").value).strip()
         self.last_mode = "unknown"
         self.last_state = -1
         self.robot_enabled = False
 
+        ns_prefix = f"/{self.hw_ns}" if self.hw_ns else ""
+        self.manual_mode_topic = manual_mode_topic or (f"{ns_prefix}/manual_mode_active" if ns_prefix else "/manual_mode_active")
+        manual_mode_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._manual_mode_publisher = self.create_publisher(Bool, self.manual_mode_topic, manual_mode_qos)
+
         self.create_subscription(ApiRequest, self.api_signal_topic, self._on_api_request, 10)
         if self.emulate_mode_services:
-            ns_prefix = f"/{self.hw_ns}" if self.hw_ns else ""
             self._motion_enable_service = self.create_service(
                 SetInt16ById, f"{ns_prefix}/motion_enable", self._handle_motion_enable
             )
             self._set_mode_service = self.create_service(SetInt16, f"{ns_prefix}/set_mode", self._handle_set_mode)
             self._set_state_service = self.create_service(SetInt16, f"{ns_prefix}/set_state", self._handle_set_state)
+        self._publish_manual_mode(False)
         self.get_logger().info(
             "master_controller started: "
             f"api_signal_topic={self.api_signal_topic}, unit_id_filter={self.unit_id_filter or '*'}, "
-            f"hw_ns={self.hw_ns or '/'}, emulate_mode_services={self.emulate_mode_services}"
+            f"hw_ns={self.hw_ns or '/'}, emulate_mode_services={self.emulate_mode_services}, "
+            f"manual_mode_topic={self.manual_mode_topic}"
         )
 
     def _on_api_request(self, msg: ApiRequest) -> None:
@@ -52,11 +62,13 @@ class MasterControllerNode(Node):
 
         if requested_mode in ("manual", "local"):
             self.last_mode = "manual"
+            self._publish_manual_mode(True)
             self.get_logger().info("manual")
             return
 
         if requested_mode in ("auto", "remote"):
             self.last_mode = "auto"
+            self._publish_manual_mode(False)
             self.get_logger().info("auto")
             return
 
@@ -83,6 +95,10 @@ class MasterControllerNode(Node):
     def _handle_set_mode(self, request: SetInt16.Request, response: SetInt16.Response) -> SetInt16.Response:
         mode_value = int(request.data)
         self.last_mode = self._mode_name(mode_value)
+        if mode_value == 2:
+            self._publish_manual_mode(True)
+        elif mode_value == 0:
+            self._publish_manual_mode(False)
         response.ret = 0
         response.message = f"master_controller accepted set_mode={mode_value} ({self.last_mode})"
         self.get_logger().info(response.message)
@@ -111,6 +127,11 @@ class MasterControllerNode(Node):
         if mode_value == 2:
             return "manual"
         return f"mode_{mode_value}"
+
+    def _publish_manual_mode(self, enabled: bool) -> None:
+        msg = Bool()
+        msg.data = enabled
+        self._manual_mode_publisher.publish(msg)
 
 
 def main() -> None:

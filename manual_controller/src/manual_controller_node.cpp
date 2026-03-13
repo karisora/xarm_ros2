@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp/qos.hpp"
+#include "std_msgs/msg/bool.hpp"
 #include "trajectory_msgs/msg/joint_trajectory.hpp"
 #include "trajectory_msgs/msg/joint_trajectory_point.hpp"
 #include "xarm_msgs/msg/api_request.hpp"
@@ -62,6 +64,7 @@ public:
     open_position_ = this->declare_parameter<double>("open_position", 0.0);
     close_position_ = this->declare_parameter<double>("close_position", 0.85);
     command_duration_sec_ = this->declare_parameter<double>("command_duration_sec", 1.0);
+    manual_mode_topic_ = this->declare_parameter<std::string>("manual_mode_topic", "/xarm/manual_mode_active");
 
     if (trajectory_topic_.empty()) {
       trajectory_topic_ = "/" + gripper_controller_name_ + "/joint_trajectory";
@@ -69,18 +72,23 @@ public:
     trajectory_topic_ = normalize_topic(trajectory_topic_);
 
     api_signal_topic_ = normalize_topic(api_signal_topic_);
+    manual_mode_topic_ = normalize_topic(manual_mode_topic_);
 
     trajectory_publisher_ =
       this->create_publisher<trajectory_msgs::msg::JointTrajectory>(trajectory_topic_, 10);
     api_request_subscription_ = this->create_subscription<xarm_msgs::msg::ApiRequest>(
       api_signal_topic_, 10,
       std::bind(&ManualControllerNode::handle_api_request, this, std::placeholders::_1));
+    auto manual_mode_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local();
+    manual_mode_subscription_ = this->create_subscription<std_msgs::msg::Bool>(
+      manual_mode_topic_, manual_mode_qos,
+      std::bind(&ManualControllerNode::handle_manual_mode, this, std::placeholders::_1));
 
     RCLCPP_INFO(
       this->get_logger(),
-      "manual_controller started: api_signal_topic=%s, trajectory_topic=%s, gripper_joint_name=%s, open_position=%.3f, close_position=%.3f",
-      api_signal_topic_.c_str(), trajectory_topic_.c_str(), gripper_joint_name_.c_str(), open_position_,
-      close_position_);
+      "manual_controller started: api_signal_topic=%s, manual_mode_topic=%s, trajectory_topic=%s, gripper_joint_name=%s, open_position=%.3f, close_position=%.3f",
+      api_signal_topic_.c_str(), manual_mode_topic_.c_str(), trajectory_topic_.c_str(),
+      gripper_joint_name_.c_str(), open_position_, close_position_);
     if (open_position_ > close_position_) {
       RCLCPP_WARN(
         this->get_logger(),
@@ -97,6 +105,13 @@ private:
     }
 
     if (msg->event_type != "manual_command" || msg->command_name != "gripper") {
+      return;
+    }
+
+    if (!manual_mode_active_) {
+      RCLCPP_DEBUG(
+        this->get_logger(),
+        "ignoring gripper manual command because manual mode is inactive");
       return;
     }
 
@@ -140,17 +155,29 @@ private:
       state.c_str(), gripper_joint_name_.c_str(), position, trajectory_topic_.c_str());
   }
 
+  void handle_manual_mode(const std_msgs::msg::Bool::SharedPtr msg)
+  {
+    manual_mode_active_ = msg->data;
+    RCLCPP_INFO(
+      this->get_logger(),
+      "manual mode %s",
+      manual_mode_active_ ? "enabled" : "disabled");
+  }
+
   std::string api_signal_topic_;
   std::string unit_id_filter_;
   std::string gripper_controller_name_;
   std::string trajectory_topic_;
   std::string gripper_joint_name_;
+  std::string manual_mode_topic_;
   double open_position_;
   double close_position_;
   double command_duration_sec_;
+  bool manual_mode_active_ {false};
 
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_publisher_;
   rclcpp::Subscription<xarm_msgs::msg::ApiRequest>::SharedPtr api_request_subscription_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr manual_mode_subscription_;
 };
 
 int main(int argc, char * argv[])
