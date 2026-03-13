@@ -1,54 +1,39 @@
 # xarm_ros2
 
-このリポジトリは、xArm 用 ROS 2 ワークスペースに、HTTP API から ROS 2 サービス/トピックへ接続するための独自ブリッジを追加した構成です。  
-フロントエンドや外部 API クライアントからの要求を `xarm_api_bridge` が受け取り、ROS 2 上の `xarm_api` と `master_controller` に橋渡しします。
+このリポジトリは、xarm2のドライバー群、IKパッケージおよびモータードライバや真空ポンプなどのIO機器ドライバも含めることを想定したROS2ベースのバックエンドパッケージです。
+このパッケージはDockerで構築することを前提にしています。モータードライバなどのドライバ群はsrc内に新しくディレクトリを作成してもらうことを想定しています。
+
 
 ## 構成概要
 
 主に以下のパッケージを使います。
 
-- `xarm_api`
+- `xarm_api`:
   xArm 本体を操作する ROS 2 サービス群を提供します。
-- `xarm_msgs`
+- `xarm_msgs`:
   `ApiRequest` や `RobotMsg` など、ブリッジと制御ノードで使うメッセージ/サービス定義を提供します。
-- `xarm_api_bridge`
+- `xarm_api_bridge`:
   FastAPI ベースの HTTP API サーバです。外部リクエストを受け取り、ROS 2 サービス呼び出しと `ApiRequest` の publish を行います。
-- `master_controller`
+- `master_controller`:
   `ApiRequest` を subscribe し、手動モード切替要求を監視します。必要に応じて `/xarm/set_mode`、`/xarm/set_state`、`/xarm/motion_enable` を疑似的に提供できます。
 
-## 何ができるか
-
-- HTTP API から xArm の有効化、モード切替、ホーム移動、初期姿勢移動を実行
-- API リクエスト内容を ROS 2 topic に流して、他ノード側でイベントとして利用
-- `/xarm/robot_states` を監視して API 側で接続状態を可視化
-- 実機がない構成でも `master_controller` の擬似サービスで API フローを確認
-
 ## アーキテクチャ
-
 ### API ブリッジから ROS 2 へのデータフロー
-
-```mermaid
-flowchart LR
-    A[Frontend / External Client] -->|HTTP REST<br/>/api/v1/*| B[xarm_api_bridge<br/>FastAPI + rclpy]
-
-    subgraph ROS2[ROS 2 Graph]
-        B -->|publish<br/>/xarm/api_requests<br/>xarm_msgs/ApiRequest| C[master_controller]
-        B -->|optional emulated services<br/>/xarm/set_mode<br/>/xarm/set_state<br/>/xarm/motion_enable| C
-        B -->|call ROS 2 services| D[xarm_api]
-        D -->|ROS 2 services| E[xArm Controller / Robot]
-        E -->|state feedback| D
-        D -->|publish<br/>/xarm/robot_states<br/>xarm_msgs/RobotMsg| B
-    end
-```
+<img width="414" height="461" alt="スクリーンショット 2026-03-13 13 46 28" src="https://github.com/user-attachments/assets/3aa0f54a-1f34-492c-a518-bac58c3245ed" />
 
 ### 制御パスの考え方
 
 1. 外部クライアントが `xarm_api_bridge` の HTTP API を呼びます。
 2. `xarm_api_bridge` は受けた payload を `xarm_msgs/msg/ApiRequest` に変換し、`/xarm/api_requests` へ publish します。
 3. 同時に必要な操作は `/xarm/set_mode` や `/xarm/motion_enable` などの ROS 2 サービスを呼び出します。
-4. `master_controller` は `ApiRequest` を受け取り、`manual` / `auto` 切替要求などを監視します。テスト用途では一部サービスの疑似受け口にもなれます。
+4. `master_controller` は `ApiRequest` を受け取り、`マニュアルモード` / `オートメーションモード` 切替要求などを監視します。テスト用途では一部サービスの疑似受け口にもなれます。
 5. `xarm_api` は xArm ドライバとして実機へコマンドを送り、状態を `/xarm/robot_states` で返します。
 6. `xarm_api_bridge` はその状態を見て、接続状態 API や各操作結果に反映します。
+7. `manual_controller`と`autonomous_controller`のそれぞれは`master_controller`により切り替えられる。
+8. 例えば自動シーケンス時は`autonomous_controller`が呼び出されそれぞれのシーケンスに応じてアームやモーターなどの動作命令を行います。動作命令は基本的にはROS2 topicをメインで利用し,statusや状態管理を行います。
+
+### 自動シーケンス
+基本的にはこの[N1-N6](https://github.com/queeenb-com/filtration-app/blob/feat/parallel-gui-4units/docs/BE-Orchestration-Engine-Guide.md) の流れで制御する。ロボットアームと攪拌などは並列して行うため、それぞれの動作を監督して命令を出すノードが必要となる。その仕事はautonomous_controllerが行う。autonomous_controllerは自動シーケンス開始後、GUIから受け取ったそれぞれのモジュールの動作時間データなどを読み取りアームや送液などの各モジュールに命令を出力する。
 
 ## 主要インタフェース
 
@@ -74,6 +59,8 @@ flowchart LR
 
 - `/xarm/api_requests`
   型: `xarm_msgs/msg/ApiRequest`
+  
+詳細はxarm_msgs内で記述
 
 主なフィールド:
 
@@ -110,103 +97,51 @@ flowchart LR
 
 ## セットアップ
 
-### 1. ROS 2 ワークスペースのビルド
+### 1. Dockerの構築
 
+権限付与
 ```bash
-cd ~/dev_ws
-source /opt/ros/$ROS_DISTRO/setup.bash
-colcon build --symlink-install
-source install/setup.bash
+xhost +local:root
 ```
 
-必要に応じて `rosdep` も先に実行してください。
-
+Docker build
 ```bash
-cd ~/dev_ws
-rosdep install --from-paths src --ignore-src -r -y
+docker build -t xarm_ros2:humble .
 ```
 
-### 2. 実機接続に必要な前提
 
-- xArm 本体の IP アドレスが分かっていること
-- `xarm_api` 側で必要なサービスが有効になっていること
-- FastAPI / Uvicorn が利用できること
+Docker run
+```bash
+docker run -it --rm \ --name xarm_gzclassic \ --net=host \ -e DISPLAY=$DISPLAY \ -v /tmp/.X11-unix:/tmp/.X11-unix:rw \ xarm_ros2:humble bash
+```
 
-## 起動手順
 
-### 実機を使う場合
+## 起動手順, 仮
+### gazebo
 
-1. xArm ドライバを起動
+1. master nodeを起動
 
 ```bash
-source ~/dev_ws/install/setup.bash
-ros2 launch xarm_api xarm6_driver.launch.py robot_ip:=192.168.1.225 hw_ns:=xarm
+ros2 launch master_controller master_controller.launch.py
 ```
 
 2. API ブリッジを起動
 
 ```bash
-source ~/dev_ws/install/setup.bash
-ros2 launch xarm_api_bridge xarm_api_bridge.launch.py \
-  api_host:=127.0.0.1 \
-  api_port:=8000 \
-  api_key:=your_api_key \
-  unit_id:=unit-xarm01 \
-  hw_ns:=xarm \
-  api_signal_topic:=/xarm/api_requests
+ros2 launch xarm_api_bridge xarm_api_bridge.launch.py api_host:=127.0.0.1 api_port:=8000 api_key:=MQWGUB1GA9rOaLCxkCGe4j4LE5cdcSxk unit_id:=unit-mys01 hw_ns:=xarm
 ```
 
-3. 必要なら `master_controller` を起動
+3. xarm simulationを起動
 
 ```bash
-source ~/dev_ws/install/setup.bash
-ros2 launch master_controller master_controller.launch.py \
-  api_signal_topic:=/xarm/api_requests \
-  hw_ns:=xarm
+ros2 launch xarm_moveit_config xarm6_moveit_gazebo_with_field.launch.py \
+robot_type:=xarm dof:=6 add_gripper:=true \
+load_controller:=true
+
 ```
 
-### 実機なしで API フローだけ確認する場合
+ここまで起動した段階でfiltarion-appを起動すると接続されます。
 
-`master_controller` は `/xarm/motion_enable`、`/xarm/set_mode`、`/xarm/set_state` を疑似的に提供できます。
-
-```bash
-source ~/dev_ws/install/setup.bash
-ros2 launch master_controller master_controller.launch.py emulate_mode_services:=true
-```
-
-その後、別ターミナルで API ブリッジを起動します。
-
-```bash
-source ~/dev_ws/install/setup.bash
-export FILTRATION_API_KEY=your_api_key
-ros2 run xarm_api_bridge xarm_api_bridge_server
-```
-
-## 動作確認例
-
-### API サーバの疎通確認
-
-```bash
-curl http://127.0.0.1:8000/status
-```
-
-### 手動モード要求を送る例
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/manual-commands \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your_api_key" \
-  -d '{"action":"arm_mode","mode":"manual","command_source":"gui"}'
-```
-
-このリクエストを送ると、`xarm_api_bridge` は `/xarm/api_requests` に `ApiRequest` を publish し、`master_controller` 側で manual モード要求として解釈されます。
-
-### 接続状態の確認
-
-```bash
-curl http://127.0.0.1:8000/api/v1/connection-status \
-  -H "X-API-Key: your_api_key"
-```
 
 ## 主なパラメータ
 
