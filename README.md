@@ -140,6 +140,8 @@ load_controller:=true
 
 ```
 
+ここまで起動した段階でfiltarion-appを起動すると接続されます。
+
 
 ## 主なパラメータ
 
