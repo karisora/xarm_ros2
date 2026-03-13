@@ -32,6 +32,9 @@
 7. `manual_controller`と`autonomous_controller`のそれぞれは`master_controller`により切り替えられる。
 8. 例えば自動シーケンス時は`autonomous_controller`が呼び出されそれぞれのシーケンスに応じてアームやモーターなどの動作命令を行います。動作命令は基本的にはROS2 topicをメインで利用し,statusや状態管理を行います。
 
+### 自動シーケンス
+基本的にはこの[N1-N6](https://github.com/queeenb-com/filtration-app/blob/feat/parallel-gui-4units/docs/BE-Orchestration-Engine-Guide.md) の流れで制御する。ロボットアームと攪拌などは並列して行うため、それぞれの動作を監督して命令を出すノードが必要となる。その仕事はautonomous_controllerが行う。autonomous_controllerは自動シーケンス開始後、GUIから受け取ったそれぞれのモジュールの動作時間データなどを読み取りアームや送液などの各モジュールに命令を出力する。
+
 ## 主要インタフェース
 
 ### HTTP API
