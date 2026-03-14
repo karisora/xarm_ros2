@@ -16,6 +16,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     default_scene_file = PathJoinSubstitution([FindPackageShare("xarm_moveit_config"), "config", "xarm6", "field.scene"])
+    default_waypoints_file = PathJoinSubstitution([FindPackageShare("xarm_planner"), "config", "eef_waypoints_example.yaml"])
 
     hw_ns = LaunchConfiguration("hw_ns")
     add_gripper = LaunchConfiguration("add_gripper")
@@ -32,10 +33,13 @@ def generate_launch_description():
     initial_pose_wait_timeout = LaunchConfiguration("initial_pose_wait_timeout")
     launch_manual_controller = LaunchConfiguration("launch_manual_controller")
     launch_autonomous_controller = LaunchConfiguration("launch_autonomous_controller")
+    launch_planner_node = LaunchConfiguration("launch_planner_node")
+    pose_reference_link = LaunchConfiguration("pose_reference_link")
     api_signal_topic = LaunchConfiguration("api_signal_topic")
     gripper_controller_name = LaunchConfiguration("gripper_controller_name")
     gripper_joint_name = LaunchConfiguration("gripper_joint_name")
     manual_mode_topic = LaunchConfiguration("manual_mode_topic")
+    waypoints_file = LaunchConfiguration("waypoints_file")
 
     base_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -67,8 +71,23 @@ def generate_launch_description():
         launch_arguments={
             "api_signal_topic": api_signal_topic,
             "hw_ns": hw_ns,
+            "waypoints_file": waypoints_file,
         }.items(),
         condition=IfCondition(launch_autonomous_controller),
+    )
+
+    planner_node_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([FindPackageShare("xarm_planner"), "launch", "_robot_planner.launch.py"])
+        ),
+        launch_arguments={
+            "dof": "6",
+            "robot_type": "xarm",
+            "hw_ns": hw_ns,
+            "add_gripper": add_gripper,
+            "pose_reference_link": pose_reference_link,
+        }.items(),
+        condition=IfCondition(launch_planner_node),
     )
 
     scene_loader = ExecuteProcess(
@@ -128,12 +147,16 @@ def generate_launch_description():
             DeclareLaunchArgument("initial_pose_wait_timeout", default_value="15.0"),
             DeclareLaunchArgument("launch_manual_controller", default_value="false"),
             DeclareLaunchArgument("launch_autonomous_controller", default_value="true"),
+            DeclareLaunchArgument("launch_planner_node", default_value="true"),
+            DeclareLaunchArgument("pose_reference_link", default_value="link_tcp"),
             DeclareLaunchArgument("api_signal_topic", default_value="/xarm/api_requests"),
             DeclareLaunchArgument("gripper_controller_name", default_value="xarm_gripper_traj_controller"),
             DeclareLaunchArgument("gripper_joint_name", default_value="drive_joint"),
             DeclareLaunchArgument("manual_mode_topic", default_value="/xarm/manual_mode_active"),
+            DeclareLaunchArgument("waypoints_file", default_value=default_waypoints_file),
             base_launch,
             manual_controller_launch,
+            planner_node_launch,
             autonomous_controller_launch,
             delayed_initial_pose_loader,
             delayed_scene_loader,

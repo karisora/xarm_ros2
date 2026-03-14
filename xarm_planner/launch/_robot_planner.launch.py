@@ -103,6 +103,7 @@ def launch_setup(context, *args, **kwargs):
     node_name = LaunchConfiguration('node_name', default=node_executable)
     node_parameters = LaunchConfiguration('node_parameters', default={})
     use_gripper_node = LaunchConfiguration('use_gripper_node', default=add_gripper)
+    pose_reference_link = LaunchConfiguration('pose_reference_link', default='link_tcp')
 
     try:
         xarm_planner_parameters = json.loads(node_parameters.perform(context))
@@ -119,7 +120,8 @@ def launch_setup(context, *args, **kwargs):
             {
                 'robot_type': robot_type,
                 'dof': dof,
-                'prefix': prefix
+                'prefix': prefix,
+                'pose_reference_link': pose_reference_link,
             },
             xarm_planner_parameters,
         ],

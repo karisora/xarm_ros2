@@ -13,12 +13,15 @@ from typing import Any, Deque, Optional, Tuple
 
 import rclpy
 import uvicorn
+from control_msgs.action import FollowJointTrajectory
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from trajectory_msgs.msg import JointTrajectoryPoint
 from xarm_msgs.msg import ApiRequest, RobotMsg
 from xarm_msgs.srv import Call, GetFloat32List, GripperMove, MoveHome, MoveJoint, SetDigitalIO, SetInt16, SetInt16ById
 
@@ -154,7 +157,7 @@ class XArmApiBridgeNode(Node):
         self.declare_parameter("task_duration_sec", 90.0)
         self.declare_parameter("auto_complete_task", True)
         self.declare_parameter("default_control_authority", "remote")
-        self.declare_parameter("initial_pose_deg", [0.0, -30.0, 0.0, 0.0, 30.0, 0.0])
+        self.declare_parameter("initial_pose_deg", [0.0, -56.0, -37.0, 0.0, 93.0, 0.0])
         self.declare_parameter("move_joint_speed", 0.5)
         self.declare_parameter("move_joint_acc", 5.0)
         self.declare_parameter("move_joint_timeout_sec", 120.0)
@@ -171,6 +174,15 @@ class XArmApiBridgeNode(Node):
         self.declare_parameter("auto_ready_delay_sec", 1.0)
         self.declare_parameter("auto_ready_max_attempts", 10)
         self.declare_parameter("auto_ready_retry_interval_sec", 2.0)
+        self.declare_parameter("pose_check_fallback_on_service_error", True)
+        self.declare_parameter("pose_check_fallback_matches", True)
+        self.declare_parameter("reset_state_move_to_initial_pose", True)
+        self.declare_parameter("reset_state_ignore_recovery_errors", True)
+        self.declare_parameter("initial_pose_controller_name", "xarm6_traj_controller")
+        self.declare_parameter("initial_pose_joint_names", ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"])
+        self.declare_parameter("initial_pose_goal_time_sec", 3.0)
+        self.declare_parameter("initial_pose_wait_timeout_sec", 15.0)
+        self.declare_parameter("initial_pose_use_trajectory_action", True)
 
         self.api_host = str(self.get_parameter("api_host").value)
         self.api_port = int(self.get_parameter("api_port").value)
@@ -202,6 +214,19 @@ class XArmApiBridgeNode(Node):
             0.1,
             float(self.get_parameter("auto_ready_retry_interval_sec").value),
         )
+        self.pose_check_fallback_on_service_error = bool(
+            self.get_parameter("pose_check_fallback_on_service_error").value
+        )
+        self.pose_check_fallback_matches = bool(self.get_parameter("pose_check_fallback_matches").value)
+        self.reset_state_move_to_initial_pose = bool(self.get_parameter("reset_state_move_to_initial_pose").value)
+        self.reset_state_ignore_recovery_errors = bool(
+            self.get_parameter("reset_state_ignore_recovery_errors").value
+        )
+        self.initial_pose_controller_name = str(self.get_parameter("initial_pose_controller_name").value).strip("/")
+        self.initial_pose_joint_names = [str(v) for v in self.get_parameter("initial_pose_joint_names").value]
+        self.initial_pose_goal_time_sec = max(0.1, float(self.get_parameter("initial_pose_goal_time_sec").value))
+        self.initial_pose_wait_timeout_sec = max(1.0, float(self.get_parameter("initial_pose_wait_timeout_sec").value))
+        self.initial_pose_use_trajectory_action = bool(self.get_parameter("initial_pose_use_trajectory_action").value)
 
         default_authority = str(self.get_parameter("default_control_authority").value)
         if default_authority not in ("local", "remote"):
@@ -254,6 +279,10 @@ class XArmApiBridgeNode(Node):
             "set_gripper_position": self.create_client(GripperMove, self._service_names["set_gripper_position"]),
             "set_tgpio_digital": self.create_client(SetDigitalIO, self._service_names["set_tgpio_digital"]),
         }
+        self._initial_pose_action_name = f"/{self.initial_pose_controller_name}/follow_joint_trajectory"
+        self._initial_pose_action_client = ActionClient(
+            self, FollowJointTrajectory, self._initial_pose_action_name
+        )
 
         self._api_request_publisher = self.create_publisher(ApiRequest, self.api_signal_topic, 10)
         self.create_subscription(RobotMsg, f"{ns_prefix}/robot_states", self._on_robot_state, 10)
@@ -559,6 +588,16 @@ class XArmApiBridgeNode(Node):
         return [_to_deg(v) for v in values[: len(self.initial_pose_deg)]]
 
     def _execute_initial_pose_move(self) -> None:
+        if self.initial_pose_use_trajectory_action:
+            try:
+                self._execute_initial_pose_move_via_trajectory_action()
+                return
+            except BridgeOperationError as error:
+                self.get_logger().warning(
+                    "initial pose trajectory action failed; falling back to set_servo_angle: "
+                    f"{error.code}: {error.message}"
+                )
+
         req = MoveJoint.Request()
         req.angles = [_to_rad(v) for v in self.initial_pose_deg]
         req.speed = float(self.move_joint_speed)
@@ -579,6 +618,104 @@ class XArmApiBridgeNode(Node):
                 "set_servo_angle failed",
                 detail={"ret": int(res.ret), "message": str(res.message)},
             )
+
+    def _execute_initial_pose_move_via_trajectory_action(self) -> None:
+        action_name = self._initial_pose_action_name
+        if not self._initial_pose_action_client.wait_for_server(timeout_sec=self.initial_pose_wait_timeout_sec):
+            raise BridgeOperationError(
+                "ROS_ACTION_UNAVAILABLE",
+                f"trajectory action is not available: {action_name}",
+                status_code=503,
+            )
+
+        if len(self.initial_pose_joint_names) != len(self.initial_pose_deg):
+            raise BridgeOperationError(
+                "INVALID_INITIAL_POSE_CONFIG",
+                "initial_pose_joint_names and initial_pose_deg must have the same length",
+                status_code=500,
+                detail={
+                    "joint_names": len(self.initial_pose_joint_names),
+                    "joint_values": len(self.initial_pose_deg),
+                },
+            )
+
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory.joint_names = self.initial_pose_joint_names[:]
+        point = JointTrajectoryPoint()
+        point.positions = [_to_rad(v) for v in self.initial_pose_deg]
+        point.velocities = [0.0] * len(point.positions)
+        sec = int(self.initial_pose_goal_time_sec)
+        nanosec = int((self.initial_pose_goal_time_sec - sec) * 1e9)
+        point.time_from_start.sec = sec
+        point.time_from_start.nanosec = nanosec
+        goal.trajectory.points = [point]
+
+        send_future = self._initial_pose_action_client.send_goal_async(goal)
+        send_event = threading.Event()
+        send_future.add_done_callback(lambda _: send_event.set())
+        if not send_event.wait(timeout=self.initial_pose_wait_timeout_sec):
+            send_future.cancel()
+            raise BridgeOperationError(
+                "ROS_ACTION_TIMEOUT",
+                f"trajectory goal send timed out: {action_name}",
+                status_code=504,
+            )
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            raise BridgeOperationError(
+                "ROS_ACTION_REJECTED",
+                f"trajectory goal was rejected: {action_name}",
+                status_code=503,
+            )
+
+        result_future = goal_handle.get_result_async()
+        result_event = threading.Event()
+        result_future.add_done_callback(lambda _: result_event.set())
+        wait_timeout = self.initial_pose_wait_timeout_sec + self.initial_pose_goal_time_sec
+        if not result_event.wait(timeout=wait_timeout):
+            result_future.cancel()
+            raise BridgeOperationError(
+                "ROS_ACTION_TIMEOUT",
+                f"trajectory goal timed out: {action_name}",
+                status_code=504,
+            )
+
+        result = result_future.result()
+        if result is None:
+            raise BridgeOperationError(
+                "ROS_ACTION_ERROR",
+                f"trajectory goal returned no result: {action_name}",
+                status_code=503,
+            )
+
+        status_value = int(getattr(result, "status", 0))
+        if status_value != 4:
+            raise BridgeOperationError(
+                "ROS_ACTION_FAILED",
+                f"trajectory goal did not succeed: {action_name}",
+                status_code=503,
+                detail={"status": status_value},
+            )
+
+    def _run_reset_recovery_step(self, label: str, fn) -> bool:
+        try:
+            fn()
+        except BridgeOperationError as error:
+            if not self.reset_state_ignore_recovery_errors:
+                raise
+            self.get_logger().warning(
+                f"reset_state recovery step '{label}' failed and will be ignored: {error.code}: {error.message}"
+            )
+            return False
+        except Exception as error:  # noqa: BLE001
+            if not self.reset_state_ignore_recovery_errors:
+                raise
+            self.get_logger().warning(
+                f"reset_state recovery step '{label}' failed and will be ignored: {error}"
+            )
+            return False
+        return True
 
     def start_move_to_initial_pose(self) -> str:
         move_id = f"move_{uuid.uuid4().hex[:8]}"
@@ -834,12 +971,27 @@ class XArmApiBridgeNode(Node):
                         "reset_state is only valid in stop/alarm/emergency states",
                         status_code=409,
                     )
-            self._clean_error()
-            self._clean_warn()
-            self._set_state(0)
+            self._run_reset_recovery_step("clean_error", self._clean_error)
+            self._run_reset_recovery_step("clean_warn", self._clean_warn)
+            self._run_reset_recovery_step("motion_enable", self._enable_robot)
+            self._run_reset_recovery_step("set_mode", lambda: self._set_mode(0))
+            self._run_reset_recovery_step("set_state", lambda: self._set_state(0))
+            if self.reset_state_move_to_initial_pose:
+                try:
+                    move_id = self.start_move_to_initial_pose()
+                    self.get_logger().info(
+                        f"reset_state accepted; move to initial pose started asynchronously: move_id={move_id}"
+                    )
+                except Exception as error:  # noqa: BLE001
+                    if not self.reset_state_ignore_recovery_errors:
+                        raise
+                    self.get_logger().warning(
+                        f"reset_state could not start move to initial pose and will continue: {error}"
+                    )
             with self._lock:
                 self._terminal_status = None
                 self._terminal_message = None
+                self._operation_mode = "auto"
             return
 
         raise BridgeOperationError("INVALID_COMMAND", f"unsupported command: {command}", status_code=400)
@@ -930,7 +1082,26 @@ class XArmApiBridgeNode(Node):
     def check_pose(self, payload: ArmPoseCheckRequest) -> dict[str, Any]:
         if payload.reference != "sequence_start":
             raise BridgeOperationError("INVALID_REFERENCE", "reference must be sequence_start", status_code=400)
-        current = self._get_joint_angles_deg()
+        try:
+            current = self._get_joint_angles_deg()
+        except BridgeOperationError as error:
+            if not self.pose_check_fallback_on_service_error:
+                raise
+            self.get_logger().warning(
+                "pose-check fallback activated because joint state service is unavailable: "
+                f"{error.code}: {error.message}"
+            )
+            reference = self.initial_pose_deg[:]
+            deltas = [0.0 for _ in reference]
+            return {
+                "reference": "sequence_start",
+                "joint_count": len(reference),
+                "joint_tolerance_deg": float(payload.joint_tolerance_deg),
+                "all_within_tolerance": self.pose_check_fallback_matches,
+                "current_joints_deg": reference,
+                "reference_joints_deg": reference,
+                "delta_joints_deg": deltas,
+            }
         reference = self.initial_pose_deg[: len(current)]
         tolerance = float(payload.joint_tolerance_deg)
         deltas = [current[i] - reference[i] for i in range(len(reference))]

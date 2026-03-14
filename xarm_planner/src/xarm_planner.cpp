@@ -32,10 +32,34 @@ void XArmPlanner::init(const std::string& group_name)
     move_group_ = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node_, group_name);
     RCLCPP_INFO(node_->get_logger(), "Planning frame: %s", move_group_->getPlanningFrame().c_str());
     RCLCPP_INFO(node_->get_logger(), "End effector link: %s", move_group_->getEndEffectorLink().c_str());
+    configurePoseReferenceLink();
+    RCLCPP_INFO(node_->get_logger(), "Active pose reference link: %s", move_group_->getEndEffectorLink().c_str());
     RCLCPP_INFO(node_->get_logger(), "Available Planning Groups:");
     std::copy(move_group_->getJointModelGroupNames().begin(), move_group_->getJointModelGroupNames().end(), std::ostream_iterator<std::string>(std::cout, ", "));
     move_group_->setMaxVelocityScalingFactor(max_velocity_scaling_factor);
     move_group_->setMaxAccelerationScalingFactor(max_acceleration_scaling_factor);
+}
+
+bool XArmPlanner::configurePoseReferenceLink()
+{
+    std::string pose_reference_link;
+    node_->get_parameter_or("pose_reference_link", pose_reference_link, std::string("link_tcp"));
+    if (pose_reference_link.empty())
+        return true;
+
+    const bool success = move_group_->setEndEffectorLink(pose_reference_link);
+    if (!success)
+    {
+        RCLCPP_WARN(
+            node_->get_logger(),
+            "failed to set pose reference link to '%s'; keeping '%s'",
+            pose_reference_link.c_str(),
+            move_group_->getEndEffectorLink().c_str());
+        return false;
+    }
+
+    RCLCPP_INFO(node_->get_logger(), "pose reference link configured as '%s'", pose_reference_link.c_str());
+    return true;
 }
 
 bool XArmPlanner::planJointTarget(const std::vector<double>& joint_target)

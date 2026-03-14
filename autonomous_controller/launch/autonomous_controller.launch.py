@@ -20,6 +20,13 @@ def generate_launch_description():
         DeclareLaunchArgument("stop_state_value", default_value="4"),
         DeclareLaunchArgument("pause_state_value", default_value="3"),
         DeclareLaunchArgument("ready_state_value", default_value="0"),
+        DeclareLaunchArgument("waypoints_file", default_value=""),
+        DeclareLaunchArgument("planner_pose_service", default_value="xarm_pose_plan"),
+        DeclareLaunchArgument("planner_joint_service", default_value="xarm_joint_plan"),
+        DeclareLaunchArgument("planner_exec_service", default_value="xarm_exec_plan"),
+        DeclareLaunchArgument("planner_service_timeout_sec", default_value="10.0"),
+        DeclareLaunchArgument("planner_exec_timeout_sec", default_value="180.0"),
+        DeclareLaunchArgument("wait_each", default_value="true"),
     ]
 
     node = Node(
@@ -42,6 +49,13 @@ def generate_launch_description():
                 "stop_state_value": LaunchConfiguration("stop_state_value"),
                 "pause_state_value": LaunchConfiguration("pause_state_value"),
                 "ready_state_value": LaunchConfiguration("ready_state_value"),
+                "waypoints_file": LaunchConfiguration("waypoints_file"),
+                "planner_pose_service": LaunchConfiguration("planner_pose_service"),
+                "planner_joint_service": LaunchConfiguration("planner_joint_service"),
+                "planner_exec_service": LaunchConfiguration("planner_exec_service"),
+                "planner_service_timeout_sec": LaunchConfiguration("planner_service_timeout_sec"),
+                "planner_exec_timeout_sec": LaunchConfiguration("planner_exec_timeout_sec"),
+                "wait_each": LaunchConfiguration("wait_each"),
             }
         ],
     )

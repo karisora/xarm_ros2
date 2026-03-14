@@ -55,6 +55,7 @@ namespace xarm_planner
         bool executePath(bool wait = true);
     private:
         void init(const std::string& group_name);
+        bool configurePoseReferenceLink();
 
         rclcpp::Node::SharedPtr node_;
         std::shared_ptr<moveit::planning_interface::MoveGroupInterface> move_group_;

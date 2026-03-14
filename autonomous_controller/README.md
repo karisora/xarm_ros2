@@ -1,11 +1,12 @@
 # autonomous_controller
 
-`autonomous_controller` subscribes to `xarm_msgs/msg/ApiRequest` and executes a basic timed autonomous sequence when the GUI sends `unit_task_start`.
+`autonomous_controller` subscribes to `xarm_msgs/msg/ApiRequest` and executes a waypoint sequence when the GUI sends `unit_task_start`.
 
 ## Behavior
 
 - Consumes `unit_task_start` requests from `/xarm/api_requests`
-- Builds sequence phases from the GUI payload `common_params`
+- Loads waypoint definitions from YAML
+- Calls `xarm_planner` services to plan and execute pose/joint waypoints
 - Handles `pause`, `resume`, `stop`, and `emergency_stop`
 - Optionally calls `/xarm/set_mode`, `/xarm/set_state`, `/xarm/motion_enable`, and `/xarm/move_gohome`
 - Publishes JSON status text to `/xarm/autonomous_controller/status`
@@ -19,4 +20,4 @@ ros2 launch autonomous_controller autonomous_controller.launch.py
 
 ## Important note
 
-This package is a minimal autonomous execution scaffold. It uses the task timing information from the GUI payload and is intended as the starting point for wiring real arm, pump, and IO actions into each phase.
+The default waypoint file is `xarm_planner/config/eef_waypoints_example.yaml`. `use_cartesian=true` in that YAML is currently treated as sequential waypoint execution.

@@ -7,9 +7,11 @@
   <maintainer email="karisora@example.com">karisora</maintainer>
   <license>BSD-3-Clause</license>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
   <exec_depend>xarm_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>python3-fastapi</exec_depend>
   <exec_depend>python3-uvicorn</exec_depend>
 

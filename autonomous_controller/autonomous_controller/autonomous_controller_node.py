@@ -4,19 +4,24 @@ import json
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+import yaml
 import rclpy
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
+from geometry_msgs.msg import Pose
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 from xarm_msgs.msg import ApiRequest
-from xarm_msgs.srv import MoveHome, SetInt16, SetInt16ById
+from xarm_msgs.srv import MoveHome, PlanExec, PlanJoint, PlanPose, SetInt16, SetInt16ById
 
 
 @dataclass
-class SequenceStep:
+class WaypointSpec:
     name: str
-    duration_sec: float
+    pose: Pose | None = None
+    joints: list[float] | None = None
 
 
 @dataclass
@@ -32,6 +37,7 @@ class AutonomousControllerNode(Node):
     def __init__(self) -> None:
         super().__init__("autonomous_controller")
 
+        default_waypoints_file = self._default_waypoints_file()
         self.declare_parameter("api_signal_topic", "/xarm/api_requests")
         self.declare_parameter("unit_id_filter", "")
         self.declare_parameter("hw_ns", "xarm")
@@ -44,6 +50,13 @@ class AutonomousControllerNode(Node):
         self.declare_parameter("stop_state_value", 4)
         self.declare_parameter("pause_state_value", 3)
         self.declare_parameter("ready_state_value", 0)
+        self.declare_parameter("waypoints_file", default_waypoints_file)
+        self.declare_parameter("planner_pose_service", "xarm_pose_plan")
+        self.declare_parameter("planner_joint_service", "xarm_joint_plan")
+        self.declare_parameter("planner_exec_service", "xarm_exec_plan")
+        self.declare_parameter("planner_service_timeout_sec", 10.0)
+        self.declare_parameter("planner_exec_timeout_sec", 180.0)
+        self.declare_parameter("wait_each", True)
 
         self.api_signal_topic = str(self.get_parameter("api_signal_topic").value)
         self.unit_id_filter = str(self.get_parameter("unit_id_filter").value).strip()
@@ -55,6 +68,13 @@ class AutonomousControllerNode(Node):
         self.stop_state_value = int(self.get_parameter("stop_state_value").value)
         self.pause_state_value = int(self.get_parameter("pause_state_value").value)
         self.ready_state_value = int(self.get_parameter("ready_state_value").value)
+        self.waypoints_file = str(self.get_parameter("waypoints_file").value).strip()
+        self.planner_pose_service = str(self.get_parameter("planner_pose_service").value).strip()
+        self.planner_joint_service = str(self.get_parameter("planner_joint_service").value).strip()
+        self.planner_exec_service = str(self.get_parameter("planner_exec_service").value).strip()
+        self.planner_service_timeout_sec = max(1.0, float(self.get_parameter("planner_service_timeout_sec").value))
+        self.planner_exec_timeout_sec = max(1.0, float(self.get_parameter("planner_exec_timeout_sec").value))
+        self.wait_each = bool(self.get_parameter("wait_each").value)
 
         ns_prefix = f"/{self.hw_ns}" if self.hw_ns else ""
         default_status_topic = f"{ns_prefix}/autonomous_controller/status" if ns_prefix else "/autonomous_controller/status"
@@ -71,6 +91,9 @@ class AutonomousControllerNode(Node):
             "set_mode": self.create_client(SetInt16, f"{ns_prefix}/set_mode"),
             "set_state": self.create_client(SetInt16, f"{ns_prefix}/set_state"),
             "move_gohome": self.create_client(MoveHome, f"{ns_prefix}/move_gohome"),
+            "planner_pose": self.create_client(PlanPose, self.planner_pose_service),
+            "planner_joint": self.create_client(PlanJoint, self.planner_joint_service),
+            "planner_exec": self.create_client(PlanExec, self.planner_exec_service),
         }
 
         self._lock = threading.Lock()
@@ -86,7 +109,8 @@ class AutonomousControllerNode(Node):
         self.get_logger().info(
             "autonomous_controller started: "
             f"api_signal_topic={self.api_signal_topic}, unit_id_filter={self.unit_id_filter or '*'}, "
-            f"hw_ns={self.hw_ns or '/'}, status_topic={self.status_topic}, active_topic={self.active_topic}"
+            f"hw_ns={self.hw_ns or '/'}, status_topic={self.status_topic}, active_topic={self.active_topic}, "
+            f"waypoints_file={self.waypoints_file or '(none)'}"
         )
 
     def _on_api_request(self, msg: ApiRequest) -> None:
@@ -178,19 +202,14 @@ class AutonomousControllerNode(Node):
     def _run_sequence(self, task: TaskContext) -> None:
         try:
             self._prepare_robot_for_sequence(task)
-            steps = self._build_steps(task.payload)
+            waypoints = self._load_waypoints(self.waypoints_file)
             self.get_logger().info(
-                f"starting autonomous sequence: unit_task_id={task.unit_task_id}, steps={len(steps)}"
+                f"starting autonomous sequence: unit_task_id={task.unit_task_id}, waypoints={len(waypoints)}"
             )
-            if not steps:
-                self._publish_status("running", task=task, message="no timed steps defined; sequence completed immediately")
-                return
+            if not waypoints:
+                raise RuntimeError(f"no waypoints found in '{self.waypoints_file}'")
 
-            for step in steps:
-                if self._stop_requested:
-                    self._publish_status("stopped", task=task, message=f"sequence stopped before '{step.name}'")
-                    return
-                self._run_step(task, step)
+            self._run_waypoint_sequence(task, waypoints)
 
             if self._stop_requested:
                 self._publish_status("stopped", task=task, message="sequence stopped")
@@ -237,79 +256,58 @@ class AutonomousControllerNode(Node):
             request.timeout = -1.0
             self._call_service("move_gohome", request, timeout_sec=10.0)
 
-    def _build_steps(self, payload: dict[str, Any]) -> list[SequenceStep]:
-        params = payload.get("params", {})
-        if not isinstance(params, dict):
-            return []
-        common_params = params.get("common_params", {})
-        if not isinstance(common_params, dict):
-            return []
-
-        preparation = common_params.get("preparation", {})
-        step1 = common_params.get("step1_slurry_injection", {})
-        step2 = common_params.get("step2_filtration_wash", {})
-        if not isinstance(preparation, dict):
-            preparation = {}
-        if not isinstance(step1, dict):
-            step1 = {}
-        if not isinstance(step2, dict):
-            step2 = {}
-
-        steps: list[SequenceStep] = []
-        steps.append(SequenceStep("preparation_feed", self._as_duration(preparation.get("feed_time_sec"))))
-        steps.append(
-            SequenceStep(
-                "preparation_depressurization",
-                self._as_duration(preparation.get("depressurization_time_sec")),
-            )
-        )
-        steps.append(SequenceStep("step1_agitation", self._as_duration(step1.get("agitation_time_sec"))))
-
-        rewash_count = self._as_count(step1.get("rewash_count"))
-        rewash_feed = self._as_duration(step1.get("rewash_feed_time_sec"))
-        rewash_agitation = self._as_duration(step1.get("agitation_time_sec"))
-        for index in range(rewash_count):
-            cycle_no = index + 1
-            steps.append(SequenceStep(f"step1_rewash_{cycle_no}_feed", rewash_feed))
-            steps.append(SequenceStep(f"step1_rewash_{cycle_no}_agitation", rewash_agitation))
-
-        steps.append(
-            SequenceStep(
-                "step1_additional_depressurization",
-                self._as_duration(step1.get("additional_depressurization_before_end_sec")),
-            )
-        )
-
-        wash_count = self._as_count(step2.get("wash_count"))
-        wash_feed = self._as_duration(step2.get("feed_time_sec"))
-        wash_dep = self._as_duration(step2.get("depressurization_time_sec"))
-        for index in range(wash_count):
-            cycle_no = index + 1
-            steps.append(SequenceStep(f"step2_wash_{cycle_no}_feed", wash_feed))
-            steps.append(SequenceStep(f"step2_wash_{cycle_no}_depressurization", wash_dep))
-
-        return [step for step in steps if step.duration_sec > 0.0]
-
-    def _run_step(self, task: TaskContext, step: SequenceStep) -> None:
-        with self._lock:
-            self._current_phase = step.name
+    def _run_waypoint_sequence(self, task: TaskContext, waypoints: list[WaypointSpec]) -> None:
         self._publish_status(
             "running",
             task=task,
-            phase=step.name,
-            message=f"running phase '{step.name}' for {step.duration_sec:.1f}s",
+            phase="waypoint_sequence",
+            message=f"loaded {len(waypoints)} waypoints from {self.waypoints_file}",
         )
-
-        deadline = time.monotonic() + step.duration_sec
-        while rclpy.ok():
-            with self._pause_condition:
-                while self._pause_requested and not self._stop_requested and rclpy.ok():
-                    self._pause_condition.wait(timeout=0.2)
+        for index, waypoint in enumerate(waypoints):
+            self._wait_until_resumed_or_stopped()
             if self._stop_requested:
                 return
-            if time.monotonic() >= deadline:
+
+            with self._lock:
+                self._current_phase = waypoint.name
+            self._publish_status(
+                "planning",
+                task=task,
+                phase=waypoint.name,
+                message=f"planning waypoint {index + 1}/{len(waypoints)}: {waypoint.name}",
+            )
+
+            if waypoint.pose is not None:
+                request = PlanPose.Request()
+                request.target = waypoint.pose
+                self._call_service("planner_pose", request, timeout_sec=self.planner_service_timeout_sec)
+            elif waypoint.joints is not None:
+                request = PlanJoint.Request()
+                request.target = waypoint.joints
+                self._call_service("planner_joint", request, timeout_sec=self.planner_service_timeout_sec)
+            else:
+                raise RuntimeError(f"waypoint '{waypoint.name}' has no pose or joints")
+
+            self._wait_until_resumed_or_stopped()
+            if self._stop_requested:
                 return
-            time.sleep(0.1)
+
+            self._publish_status(
+                "executing",
+                task=task,
+                phase=waypoint.name,
+                message=f"executing waypoint {index + 1}/{len(waypoints)}: {waypoint.name}",
+            )
+            exec_request = PlanExec.Request()
+            exec_request.wait = self.wait_each
+            self._call_service("planner_exec", exec_request, timeout_sec=self.planner_exec_timeout_sec)
+
+        self._publish_status("running", task=task, phase="waypoint_sequence", message="all waypoints executed")
+
+    def _wait_until_resumed_or_stopped(self) -> None:
+        with self._pause_condition:
+            while self._pause_requested and not self._stop_requested and rclpy.ok():
+                self._pause_condition.wait(timeout=0.2)
 
     def _set_state_if_configured(self, state_value: int) -> None:
         request = SetInt16.Request()
@@ -337,9 +335,11 @@ class AutonomousControllerNode(Node):
             raise RuntimeError(f"service '{client.srv_name}' returned no response")
 
         ret_value = getattr(result, "ret", 0)
-        if int(ret_value) != 0:
+        if hasattr(result, "ret") and int(ret_value) != 0:
             message = getattr(result, "message", "")
             raise RuntimeError(f"service '{client.srv_name}' failed: ret={int(ret_value)} message={message}")
+        if hasattr(result, "success") and not bool(result.success):
+            raise RuntimeError(f"service '{client.srv_name}' reported success=false")
         return result
 
     def _publish_status(
@@ -386,19 +386,115 @@ class AutonomousControllerNode(Node):
             return {}
         return value if isinstance(value, dict) else {}
 
-    def _as_duration(self, value: Any) -> float:
-        try:
-            duration = float(value)
-        except (TypeError, ValueError):
-            return 0.0
-        return max(0.0, duration)
+    def _load_waypoints(self, file_path: str) -> list[WaypointSpec]:
+        if not file_path:
+            raise RuntimeError("waypoints_file is empty")
 
-    def _as_count(self, value: Any) -> int:
+        path = Path(file_path)
+        if not path.exists():
+            raise RuntimeError(f"waypoints file not found: {file_path}")
+
+        with path.open("r", encoding="utf-8") as handle:
+            loaded = yaml.safe_load(handle) or {}
+
+        parameters = self._extract_ros_parameters(loaded)
+        if bool(parameters.get("use_cartesian", False)):
+            self.get_logger().warning(
+                "use_cartesian=true is not supported by autonomous_controller; sequential waypoint execution will be used"
+            )
+
+        raw_waypoints = parameters.get("waypoints", {})
+        waypoint_count = self._coerce_non_negative_int(parameters.get("waypoint_count"))
+
+        entries: list[tuple[str, dict[str, Any]]] = []
+        if isinstance(raw_waypoints, list):
+            for index, item in enumerate(raw_waypoints):
+                if isinstance(item, dict):
+                    entries.append((str(index), item))
+        elif isinstance(raw_waypoints, dict):
+            for key, item in sorted(raw_waypoints.items(), key=lambda item: self._sort_waypoint_key(item[0])):
+                if isinstance(item, dict):
+                    entries.append((str(key), item))
+
+        if waypoint_count > 0:
+            entries = entries[:waypoint_count]
+
+        waypoints: list[WaypointSpec] = []
+        for key, item in entries:
+            name = str(item.get("name") or f"waypoint_{key}")
+            if "position" in item and "orientation" in item:
+                waypoints.append(WaypointSpec(name=name, pose=self._build_pose(item)))
+                continue
+            joints = self._extract_joint_values(item)
+            if joints is not None:
+                waypoints.append(WaypointSpec(name=name, joints=joints))
+                continue
+            raise RuntimeError(f"waypoint '{name}' must define pose or joints")
+
+        return waypoints
+
+    def _extract_ros_parameters(self, loaded: Any) -> dict[str, Any]:
+        if not isinstance(loaded, dict):
+            raise RuntimeError("waypoints YAML must be a mapping")
+        if "ros__parameters" in loaded and isinstance(loaded["ros__parameters"], dict):
+            return loaded["ros__parameters"]
+        for candidate in ("autonomous_controller", "eef_waypoint_commander_node"):
+            node_block = loaded.get(candidate)
+            if isinstance(node_block, dict) and isinstance(node_block.get("ros__parameters"), dict):
+                return node_block["ros__parameters"]
+        for value in loaded.values():
+            if isinstance(value, dict) and isinstance(value.get("ros__parameters"), dict):
+                return value["ros__parameters"]
+        return loaded
+
+    def _build_pose(self, waypoint: dict[str, Any]) -> Pose:
+        position = waypoint.get("position")
+        orientation = waypoint.get("orientation")
+        if not isinstance(position, list) or len(position) != 3:
+            raise RuntimeError("waypoint position must be a list of 3 values")
+        if not isinstance(orientation, list) or len(orientation) != 4:
+            raise RuntimeError("waypoint orientation must be a list of 4 values")
+        pose = Pose()
+        pose.position.x = float(position[0])
+        pose.position.y = float(position[1])
+        pose.position.z = float(position[2])
+        pose.orientation.x = float(orientation[0])
+        pose.orientation.y = float(orientation[1])
+        pose.orientation.z = float(orientation[2])
+        pose.orientation.w = float(orientation[3])
+        return pose
+
+    def _extract_joint_values(self, waypoint: dict[str, Any]) -> list[float] | None:
+        if isinstance(waypoint.get("joints"), list):
+            return [float(value) for value in waypoint["joints"]]
+        if isinstance(waypoint.get("joints_rad"), list):
+            return [float(value) for value in waypoint["joints_rad"]]
+        if isinstance(waypoint.get("joints_deg"), list):
+            return [self._deg_to_rad(float(value)) for value in waypoint["joints_deg"]]
+        return None
+
+    def _coerce_non_negative_int(self, value: Any) -> int:
         try:
-            count = int(value)
+            parsed = int(value)
         except (TypeError, ValueError):
             return 0
-        return max(0, count)
+        return max(0, parsed)
+
+    def _sort_waypoint_key(self, value: Any) -> tuple[int, str]:
+        try:
+            return (0, f"{int(value):09d}")
+        except (TypeError, ValueError):
+            return (1, str(value))
+
+    def _deg_to_rad(self, value_deg: float) -> float:
+        return value_deg * 3.141592653589793 / 180.0
+
+    def _default_waypoints_file(self) -> str:
+        try:
+            package_share = Path(get_package_share_directory("xarm_planner"))
+        except PackageNotFoundError:
+            return ""
+        return str(package_share / "config" / "eef_waypoints_example.yaml")
 
 
 def main() -> None:

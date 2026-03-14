@@ -3,16 +3,18 @@ eef_waypoint_commander_node:
     robot_type: xarm
     dof: 6
     prefix: ""
+    # Interpret waypoint poses relative to the tool center point.
+    pose_reference_link: link_tcp
     wait_each: true
     # true: Cartesian interpolation between waypoints (>=2 points required)
     # false: Pose-to-pose planning for each waypoint
     use_cartesian: false
-    waypoint_count: 3
+    waypoint_count: 4
     waypoints:
       0:
-        # [x, y, z] in meters
+        # [x, y, z] in meters, expressed for link_tcp
         position: [0.30, 0.00, 0.25]
-        # [qx, qy, qz, qw]
+        # [qx, qy, qz, qw] for link_tcp
         orientation: [1.0, 0.0, 0.0, 0.0]
       1:
         position: [0.34, 0.08, 0.26]
@@ -20,4 +22,6 @@ eef_waypoint_commander_node:
       2:
         position: [0.30, -0.08, 0.26]
         orientation: [1.0, 0.0, 0.0, 0.0]
-
+      3:
+        position: [0.30, -0.08, 0.43]
+        orientation: [1.0, 0.0, 0.0, 0.0]
