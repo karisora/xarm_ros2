@@ -19,5 +19,16 @@ eef_waypoint_commander_node:
         # [qx, qy, qz, qw] for link_tcp. Ignored when position_only=true.
         orientation: [1.0, 0.0, 0.0, 0.0]
       1:
+<<<<<<< HEAD
         position: [0.27198, 0.24739, 0.32231]
         orientation: [0.0044074, 0.67741, 0.0047615, 0.73557]
+=======
+        position: [0.27991, 0.18669, 0.18993]
+        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
+      2:
+        position: [0.267815, 0.292945, 0.18993]
+        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
+      3:
+        position: [0.267815, 0.292945, 0.074495]
+        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
+>>>>>>> 9dca52c (add: eff waypoint param)
