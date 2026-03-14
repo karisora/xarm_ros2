@@ -19,6 +19,7 @@
 // #include <moveit_visual_tools/moveit_visual_tools.h>
 
 #include <std_msgs/msg/bool.hpp>
+#include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <xarm_msgs/srv/plan_pose.hpp>
 #include <xarm_msgs/srv/plan_joint.hpp>
 #include <xarm_msgs/srv/plan_exec.hpp>
@@ -42,6 +43,7 @@ namespace xarm_planner
 
         std::string getPlanningFrame() const;
         std::string getEndEffectorLink() const;
+        trajectory_msgs::msg::JointTrajectory getLastJointTrajectory() const;
 
         bool executePath(bool wait = true);
     private:

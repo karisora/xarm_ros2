@@ -36,10 +36,16 @@ def generate_launch_description():
     launch_planner_node = LaunchConfiguration("launch_planner_node")
     pose_reference_link = LaunchConfiguration("pose_reference_link")
     api_signal_topic = LaunchConfiguration("api_signal_topic")
+    arm_controller_name = LaunchConfiguration("arm_controller_name")
+    arm_trajectory_topic = LaunchConfiguration("arm_trajectory_topic")
     gripper_controller_name = LaunchConfiguration("gripper_controller_name")
     gripper_joint_name = LaunchConfiguration("gripper_joint_name")
+    gripper_trajectory_topic = LaunchConfiguration("gripper_trajectory_topic")
+    gripper_command_duration_sec = LaunchConfiguration("gripper_command_duration_sec")
     manual_mode_topic = LaunchConfiguration("manual_mode_topic")
     waypoints_file = LaunchConfiguration("waypoints_file")
+    path_mode = LaunchConfiguration("path_mode")
+    saved_path_file = LaunchConfiguration("saved_path_file")
 
     base_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -72,6 +78,14 @@ def generate_launch_description():
             "api_signal_topic": api_signal_topic,
             "hw_ns": hw_ns,
             "waypoints_file": waypoints_file,
+            "arm_controller_name": arm_controller_name,
+            "arm_trajectory_topic": arm_trajectory_topic,
+            "gripper_controller_name": gripper_controller_name,
+            "gripper_trajectory_topic": gripper_trajectory_topic,
+            "gripper_joint_name": gripper_joint_name,
+            "gripper_command_duration_sec": gripper_command_duration_sec,
+            "path_mode": path_mode,
+            "saved_path_file": saved_path_file,
         }.items(),
         condition=IfCondition(launch_autonomous_controller),
     )
@@ -150,10 +164,16 @@ def generate_launch_description():
             DeclareLaunchArgument("launch_planner_node", default_value="true"),
             DeclareLaunchArgument("pose_reference_link", default_value="link_tcp"),
             DeclareLaunchArgument("api_signal_topic", default_value="/xarm/api_requests"),
+            DeclareLaunchArgument("arm_controller_name", default_value="xarm6_traj_controller"),
+            DeclareLaunchArgument("arm_trajectory_topic", default_value=""),
             DeclareLaunchArgument("gripper_controller_name", default_value="xarm_gripper_traj_controller"),
+            DeclareLaunchArgument("gripper_trajectory_topic", default_value=""),
             DeclareLaunchArgument("gripper_joint_name", default_value="drive_joint"),
+            DeclareLaunchArgument("gripper_command_duration_sec", default_value="1.0"),
             DeclareLaunchArgument("manual_mode_topic", default_value="/xarm/manual_mode_active"),
             DeclareLaunchArgument("waypoints_file", default_value=default_waypoints_file),
+            DeclareLaunchArgument("path_mode", default_value="waypoint"),
+            DeclareLaunchArgument("saved_path_file", default_value=""),
             base_launch,
             manual_controller_launch,
             planner_node_launch,

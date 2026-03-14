@@ -13,8 +13,17 @@ from ament_index_python.packages import PackageNotFoundError, get_package_share_
 from geometry_msgs.msg import Pose
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from xarm_msgs.msg import ApiRequest
-from xarm_msgs.srv import MoveHome, PlanExec, PlanJoint, PlanPose, SetInt16, SetInt16ById
+from xarm_msgs.srv import (
+    GetPlannedJointTrajectory,
+    MoveHome,
+    PlanExec,
+    PlanJoint,
+    PlanPose,
+    SetInt16,
+    SetInt16ById,
+)
 
 
 @dataclass
@@ -22,6 +31,7 @@ class WaypointSpec:
     name: str
     pose: Pose | None = None
     joints: list[float] | None = None
+    gripper: float | None = None
 
 
 @dataclass
@@ -31,6 +41,12 @@ class TaskContext:
     job_id: str
     unit_task_id: str
     payload: dict[str, Any]
+
+
+@dataclass
+class PathExecutionConfig:
+    mode: str
+    saved_path_file: str
 
 
 class AutonomousControllerNode(Node):
@@ -54,8 +70,17 @@ class AutonomousControllerNode(Node):
         self.declare_parameter("planner_pose_service", "xarm_pose_plan")
         self.declare_parameter("planner_joint_service", "xarm_joint_plan")
         self.declare_parameter("planner_exec_service", "xarm_exec_plan")
+        self.declare_parameter("planner_get_trajectory_service", "xarm_get_planned_joint_trajectory")
         self.declare_parameter("planner_service_timeout_sec", 10.0)
         self.declare_parameter("planner_exec_timeout_sec", 180.0)
+        self.declare_parameter("arm_controller_name", "xarm6_traj_controller")
+        self.declare_parameter("arm_trajectory_topic", "")
+        self.declare_parameter("gripper_controller_name", "xarm_gripper_traj_controller")
+        self.declare_parameter("gripper_trajectory_topic", "")
+        self.declare_parameter("gripper_joint_name", "drive_joint")
+        self.declare_parameter("gripper_command_duration_sec", 1.0)
+        self.declare_parameter("path_mode", "waypoint")
+        self.declare_parameter("saved_path_file", "")
         self.declare_parameter("wait_each", True)
 
         self.api_signal_topic = str(self.get_parameter("api_signal_topic").value)
@@ -72,8 +97,21 @@ class AutonomousControllerNode(Node):
         self.planner_pose_service = str(self.get_parameter("planner_pose_service").value).strip()
         self.planner_joint_service = str(self.get_parameter("planner_joint_service").value).strip()
         self.planner_exec_service = str(self.get_parameter("planner_exec_service").value).strip()
+        self.planner_get_trajectory_service = str(
+            self.get_parameter("planner_get_trajectory_service").value
+        ).strip()
         self.planner_service_timeout_sec = max(1.0, float(self.get_parameter("planner_service_timeout_sec").value))
         self.planner_exec_timeout_sec = max(1.0, float(self.get_parameter("planner_exec_timeout_sec").value))
+        self.arm_controller_name = str(self.get_parameter("arm_controller_name").value).strip()
+        self.arm_trajectory_topic = str(self.get_parameter("arm_trajectory_topic").value).strip()
+        self.gripper_controller_name = str(self.get_parameter("gripper_controller_name").value).strip()
+        self.gripper_trajectory_topic = str(self.get_parameter("gripper_trajectory_topic").value).strip()
+        self.gripper_joint_name = str(self.get_parameter("gripper_joint_name").value).strip()
+        self.gripper_command_duration_sec = max(
+            0.01, float(self.get_parameter("gripper_command_duration_sec").value)
+        )
+        self.path_mode = str(self.get_parameter("path_mode").value).strip().lower()
+        self.saved_path_file = str(self.get_parameter("saved_path_file").value).strip()
         self.wait_each = bool(self.get_parameter("wait_each").value)
 
         ns_prefix = f"/{self.hw_ns}" if self.hw_ns else ""
@@ -86,6 +124,20 @@ class AutonomousControllerNode(Node):
         self._active_publisher = self.create_publisher(Bool, self.active_topic, 10)
         self.create_subscription(ApiRequest, self.api_signal_topic, self._on_api_request, 10)
 
+        if not self.arm_trajectory_topic:
+            self.arm_trajectory_topic = f"/{self.arm_controller_name}/joint_trajectory"
+        self.arm_trajectory_topic = self._normalize_topic(self.arm_trajectory_topic)
+        self._arm_trajectory_publisher = self.create_publisher(
+            JointTrajectory, self.arm_trajectory_topic, 10
+        )
+
+        if not self.gripper_trajectory_topic:
+            self.gripper_trajectory_topic = f"/{self.gripper_controller_name}/joint_trajectory"
+        self.gripper_trajectory_topic = self._normalize_topic(self.gripper_trajectory_topic)
+        self._gripper_trajectory_publisher = self.create_publisher(
+            JointTrajectory, self.gripper_trajectory_topic, 10
+        )
+
         self._service_clients = {
             "motion_enable": self.create_client(SetInt16ById, f"{ns_prefix}/motion_enable"),
             "set_mode": self.create_client(SetInt16, f"{ns_prefix}/set_mode"),
@@ -94,6 +146,9 @@ class AutonomousControllerNode(Node):
             "planner_pose": self.create_client(PlanPose, self.planner_pose_service),
             "planner_joint": self.create_client(PlanJoint, self.planner_joint_service),
             "planner_exec": self.create_client(PlanExec, self.planner_exec_service),
+            "planner_get_trajectory": self.create_client(
+                GetPlannedJointTrajectory, self.planner_get_trajectory_service
+            ),
         }
 
         self._lock = threading.Lock()
@@ -110,7 +165,7 @@ class AutonomousControllerNode(Node):
             "autonomous_controller started: "
             f"api_signal_topic={self.api_signal_topic}, unit_id_filter={self.unit_id_filter or '*'}, "
             f"hw_ns={self.hw_ns or '/'}, status_topic={self.status_topic}, active_topic={self.active_topic}, "
-            f"waypoints_file={self.waypoints_file or '(none)'}"
+            f"waypoints_file={self.waypoints_file or '(none)'}, path_mode={self.path_mode or 'waypoint'}"
         )
 
     def _on_api_request(self, msg: ApiRequest) -> None:
@@ -202,14 +257,33 @@ class AutonomousControllerNode(Node):
     def _run_sequence(self, task: TaskContext) -> None:
         try:
             self._prepare_robot_for_sequence(task)
-            waypoints = self._load_waypoints(self.waypoints_file)
-            self.get_logger().info(
-                f"starting autonomous sequence: unit_task_id={task.unit_task_id}, waypoints={len(waypoints)}"
-            )
-            if not waypoints:
-                raise RuntimeError(f"no waypoints found in '{self.waypoints_file}'")
+            parameters = self._load_waypoint_parameters(self.waypoints_file)
+            path_config = self._load_path_execution_config(parameters)
+            saved_path = self._resolve_saved_path(path_config.saved_path_file, self.waypoints_file)
+            if path_config.mode == "replay_path" and not saved_path.is_file():
+                raise RuntimeError(f"saved path file not found: {saved_path}")
 
-            self._run_waypoint_sequence(task, waypoints)
+            if path_config.mode in {"replay_path", "auto"} and saved_path.is_file():
+                self.get_logger().info(
+                    f"starting autonomous sequence from saved path: unit_task_id={task.unit_task_id}, "
+                    f"saved_path={saved_path}"
+                )
+                self._replay_saved_path(task, saved_path)
+            else:
+                waypoints = self._load_waypoints_from_parameters(parameters)
+                self.get_logger().info(
+                    f"starting autonomous sequence: unit_task_id={task.unit_task_id}, "
+                    f"waypoints={len(waypoints)}, mode={path_config.mode}"
+                )
+                if not waypoints:
+                    raise RuntimeError(f"no waypoints found in '{self.waypoints_file}'")
+
+                should_record = path_config.mode in {"record_path", "auto"}
+                recorded_segments = self._run_waypoint_sequence(task, waypoints, capture_segments=should_record)
+                if should_record:
+                    if not saved_path:
+                        raise RuntimeError("saved_path_file is required when path_mode is record_path or auto")
+                    self._save_recorded_path(saved_path, recorded_segments)
 
             if self._stop_requested:
                 self._publish_status("stopped", task=task, message="sequence stopped")
@@ -256,7 +330,14 @@ class AutonomousControllerNode(Node):
             request.timeout = -1.0
             self._call_service("move_gohome", request, timeout_sec=10.0)
 
-    def _run_waypoint_sequence(self, task: TaskContext, waypoints: list[WaypointSpec]) -> None:
+    def _run_waypoint_sequence(
+        self,
+        task: TaskContext,
+        waypoints: list[WaypointSpec],
+        *,
+        capture_segments: bool,
+    ) -> list[dict[str, Any]]:
+        recorded_segments: list[dict[str, Any]] = []
         self._publish_status(
             "running",
             task=task,
@@ -266,7 +347,7 @@ class AutonomousControllerNode(Node):
         for index, waypoint in enumerate(waypoints):
             self._wait_until_resumed_or_stopped()
             if self._stop_requested:
-                return
+                return recorded_segments
 
             with self._lock:
                 self._current_phase = waypoint.name
@@ -285,24 +366,53 @@ class AutonomousControllerNode(Node):
                 request = PlanJoint.Request()
                 request.target = waypoint.joints
                 self._call_service("planner_joint", request, timeout_sec=self.planner_service_timeout_sec)
-            else:
+            elif waypoint.gripper is None:
                 raise RuntimeError(f"waypoint '{waypoint.name}' has no pose or joints")
+            else:
+                self.get_logger().info(f"waypoint '{waypoint.name}' has gripper-only command")
 
-            self._wait_until_resumed_or_stopped()
-            if self._stop_requested:
-                return
+            if waypoint.pose is not None or waypoint.joints is not None:
+                if capture_segments:
+                    recorded_segments.append(self._capture_planned_arm_segment(waypoint.name))
+                self._wait_until_resumed_or_stopped()
+                if self._stop_requested:
+                    return recorded_segments
 
-            self._publish_status(
-                "executing",
-                task=task,
-                phase=waypoint.name,
-                message=f"executing waypoint {index + 1}/{len(waypoints)}: {waypoint.name}",
-            )
-            exec_request = PlanExec.Request()
-            exec_request.wait = self.wait_each
-            self._call_service("planner_exec", exec_request, timeout_sec=self.planner_exec_timeout_sec)
+                self._publish_status(
+                    "executing",
+                    task=task,
+                    phase=waypoint.name,
+                    message=f"executing waypoint {index + 1}/{len(waypoints)}: {waypoint.name}",
+                )
+                exec_request = PlanExec.Request()
+                exec_request.wait = self.wait_each
+                self._call_service("planner_exec", exec_request, timeout_sec=self.planner_exec_timeout_sec)
+
+            if waypoint.gripper is not None:
+                gripper_trajectory = self._build_gripper_trajectory(waypoint.gripper)
+                if capture_segments:
+                    recorded_segments.append(
+                        self._make_saved_segment("gripper", f"{waypoint.name}_gripper", gripper_trajectory)
+                    )
+                self._wait_until_resumed_or_stopped()
+                if self._stop_requested:
+                    return recorded_segments
+
+                self._publish_status(
+                    "executing",
+                    task=task,
+                    phase=waypoint.name,
+                    message=(
+                        f"executing gripper for waypoint {index + 1}/{len(waypoints)}: "
+                        f"{waypoint.name} ({waypoint.gripper:.3f} rad)"
+                    ),
+                )
+                self._gripper_trajectory_publisher.publish(gripper_trajectory)
+                if self.wait_each:
+                    time.sleep(self.gripper_command_duration_sec)
 
         self._publish_status("running", task=task, phase="waypoint_sequence", message="all waypoints executed")
+        return recorded_segments
 
     def _wait_until_resumed_or_stopped(self) -> None:
         with self._pause_condition:
@@ -386,7 +496,15 @@ class AutonomousControllerNode(Node):
             return {}
         return value if isinstance(value, dict) else {}
 
-    def _load_waypoints(self, file_path: str) -> list[WaypointSpec]:
+    def _publish_gripper_trajectory(self, target_rad: float) -> None:
+        trajectory = self._build_gripper_trajectory(target_rad)
+        self._gripper_trajectory_publisher.publish(trajectory)
+        self.get_logger().info(
+            f"published gripper trajectory: joint={self.gripper_joint_name}, "
+            f"target={target_rad:.3f} rad, topic={self.gripper_trajectory_topic}"
+        )
+
+    def _load_waypoint_parameters(self, file_path: str) -> dict[str, Any]:
         if not file_path:
             raise RuntimeError("waypoints_file is empty")
 
@@ -402,7 +520,9 @@ class AutonomousControllerNode(Node):
             self.get_logger().warning(
                 "use_cartesian=true is not supported by autonomous_controller; sequential waypoint execution will be used"
             )
+        return parameters
 
+    def _load_waypoints_from_parameters(self, parameters: dict[str, Any]) -> list[WaypointSpec]:
         raw_waypoints = parameters.get("waypoints", {})
         waypoint_count = self._coerce_non_negative_int(parameters.get("waypoint_count"))
 
@@ -422,16 +542,147 @@ class AutonomousControllerNode(Node):
         waypoints: list[WaypointSpec] = []
         for key, item in entries:
             name = str(item.get("name") or f"waypoint_{key}")
+            gripper = self._extract_gripper_value(item)
             if "position" in item and "orientation" in item:
-                waypoints.append(WaypointSpec(name=name, pose=self._build_pose(item)))
+                waypoints.append(WaypointSpec(name=name, pose=self._build_pose(item), gripper=gripper))
                 continue
             joints = self._extract_joint_values(item)
             if joints is not None:
-                waypoints.append(WaypointSpec(name=name, joints=joints))
+                waypoints.append(WaypointSpec(name=name, joints=joints, gripper=gripper))
                 continue
-            raise RuntimeError(f"waypoint '{name}' must define pose or joints")
+            if gripper is not None:
+                waypoints.append(WaypointSpec(name=name, gripper=gripper))
+                continue
+            raise RuntimeError(f"waypoint '{name}' must define pose, joints, or gripper")
 
         return waypoints
+
+    def _load_path_execution_config(self, parameters: dict[str, Any]) -> PathExecutionConfig:
+        mode = str(parameters.get("path_mode", self.path_mode) or self.path_mode or "waypoint").strip().lower()
+        if mode not in {"waypoint", "record_path", "replay_path", "auto"}:
+            raise RuntimeError(f"unsupported path_mode: {mode}")
+
+        saved_path_file = str(parameters.get("saved_path_file", self.saved_path_file) or self.saved_path_file).strip()
+        return PathExecutionConfig(mode=mode, saved_path_file=saved_path_file)
+
+    def _resolve_saved_path(self, saved_path_file: str, base_file: str) -> Path:
+        if not saved_path_file:
+            return Path("")
+        path = Path(saved_path_file).expanduser()
+        if path.is_absolute():
+            return path
+        return Path(base_file).resolve().parent / path
+
+    def _capture_planned_arm_segment(self, name: str) -> dict[str, Any]:
+        request = GetPlannedJointTrajectory.Request()
+        result = self._call_service("planner_get_trajectory", request, timeout_sec=self.planner_service_timeout_sec)
+        return self._make_saved_segment("arm", name, result.trajectory)
+
+    def _build_gripper_trajectory(self, target_rad: float) -> JointTrajectory:
+        trajectory = JointTrajectory()
+        trajectory.joint_names = [self.gripper_joint_name]
+        point = JointTrajectoryPoint()
+        point.positions = [float(target_rad)]
+        duration_sec = self.gripper_command_duration_sec
+        point.time_from_start.sec = int(duration_sec)
+        point.time_from_start.nanosec = int((duration_sec - int(duration_sec)) * 1_000_000_000)
+        trajectory.points = [point]
+        return trajectory
+
+    def _make_saved_segment(self, kind: str, name: str, trajectory: JointTrajectory) -> dict[str, Any]:
+        return {
+            "kind": kind,
+            "name": name,
+            "trajectory": self._trajectory_to_dict(trajectory),
+        }
+
+    def _trajectory_to_dict(self, trajectory: JointTrajectory) -> dict[str, Any]:
+        return {
+            "joint_names": list(trajectory.joint_names),
+            "points": [
+                {
+                    "positions": [float(value) for value in point.positions],
+                    "velocities": [float(value) for value in point.velocities],
+                    "accelerations": [float(value) for value in point.accelerations],
+                    "effort": [float(value) for value in point.effort],
+                    "time_from_start_sec": self._duration_to_sec(point.time_from_start.sec, point.time_from_start.nanosec),
+                }
+                for point in trajectory.points
+            ],
+        }
+
+    def _trajectory_from_dict(self, data: dict[str, Any]) -> JointTrajectory:
+        trajectory = JointTrajectory()
+        trajectory.joint_names = [str(name) for name in data.get("joint_names", [])]
+        points: list[JointTrajectoryPoint] = []
+        for raw_point in data.get("points", []):
+            point = JointTrajectoryPoint()
+            point.positions = [float(value) for value in raw_point.get("positions", [])]
+            point.velocities = [float(value) for value in raw_point.get("velocities", [])]
+            point.accelerations = [float(value) for value in raw_point.get("accelerations", [])]
+            point.effort = [float(value) for value in raw_point.get("effort", [])]
+            sec_value = float(raw_point.get("time_from_start_sec", 0.0))
+            point.time_from_start.sec = int(sec_value)
+            point.time_from_start.nanosec = int((sec_value - int(sec_value)) * 1_000_000_000)
+            points.append(point)
+        trajectory.points = points
+        return trajectory
+
+    def _save_recorded_path(self, path: Path, segments: list[dict[str, Any]]) -> None:
+        if not segments:
+            raise RuntimeError("no trajectory segments were recorded")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": 1,
+            "source_waypoints_file": self.waypoints_file,
+            "segments": segments,
+        }
+        path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        self.get_logger().info(f"saved recorded path to {path}")
+
+    def _load_saved_path(self, path: Path) -> list[dict[str, Any]]:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        segments = loaded.get("segments")
+        if not isinstance(segments, list) or not segments:
+            raise RuntimeError(f"saved path file has no segments: {path}")
+        return segments
+
+    def _replay_saved_path(self, task: TaskContext, path: Path) -> None:
+        segments = self._load_saved_path(path)
+        self._publish_status(
+            "running",
+            task=task,
+            phase="saved_path",
+            message=f"loaded {len(segments)} saved path segments from {path}",
+        )
+        for index, segment in enumerate(segments):
+            self._wait_until_resumed_or_stopped()
+            if self._stop_requested:
+                return
+
+            kind = str(segment.get("kind", "")).strip().lower()
+            name = str(segment.get("name", f"segment_{index}"))
+            trajectory = self._trajectory_from_dict(segment.get("trajectory", {}))
+            if not trajectory.joint_names or not trajectory.points:
+                raise RuntimeError(f"saved segment '{name}' is missing trajectory points")
+
+            self._publish_status(
+                "executing",
+                task=task,
+                phase=name,
+                message=f"replaying saved path segment {index + 1}/{len(segments)}: {name}",
+            )
+            if kind == "arm":
+                self._arm_trajectory_publisher.publish(trajectory)
+            elif kind == "gripper":
+                self._gripper_trajectory_publisher.publish(trajectory)
+            else:
+                raise RuntimeError(f"unsupported saved path segment kind: {kind}")
+
+            if self.wait_each:
+                time.sleep(max(0.01, self._trajectory_duration_sec(trajectory)))
+
+        self._publish_status("running", task=task, phase="saved_path", message="all saved path segments executed")
 
     def _extract_ros_parameters(self, loaded: Any) -> dict[str, Any]:
         if not isinstance(loaded, dict):
@@ -473,6 +724,13 @@ class AutonomousControllerNode(Node):
             return [self._deg_to_rad(float(value)) for value in waypoint["joints_deg"]]
         return None
 
+    def _extract_gripper_value(self, waypoint: dict[str, Any]) -> float | None:
+        if "gripper" in waypoint:
+            return float(waypoint["gripper"])
+        if "gripper_deg" in waypoint:
+            return self._deg_to_rad(float(waypoint["gripper_deg"]))
+        return None
+
     def _coerce_non_negative_int(self, value: Any) -> int:
         try:
             parsed = int(value)
@@ -486,8 +744,23 @@ class AutonomousControllerNode(Node):
         except (TypeError, ValueError):
             return (1, str(value))
 
+    def _duration_to_sec(self, sec: int, nanosec: int) -> float:
+        return float(sec) + float(nanosec) / 1_000_000_000.0
+
+    def _trajectory_duration_sec(self, trajectory: JointTrajectory) -> float:
+        if not trajectory.points:
+            return 0.0
+        point = trajectory.points[-1]
+        return self._duration_to_sec(point.time_from_start.sec, point.time_from_start.nanosec)
+
     def _deg_to_rad(self, value_deg: float) -> float:
         return value_deg * 3.141592653589793 / 180.0
+
+    def _normalize_topic(self, topic: str) -> str:
+        topic = topic.strip()
+        if not topic:
+            return topic
+        return topic if topic.startswith("/") else f"/{topic}"
 
     def _default_waypoints_file(self) -> str:
         try:

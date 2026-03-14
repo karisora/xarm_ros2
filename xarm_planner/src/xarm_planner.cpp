@@ -137,6 +137,11 @@ std::string XArmPlanner::getEndEffectorLink() const
     return move_group_->getEndEffectorLink();
 }
 
+trajectory_msgs::msg::JointTrajectory XArmPlanner::getLastJointTrajectory() const
+{
+    return is_trajectory_ ? trajectory_.joint_trajectory : xarm_plan_.trajectory_.joint_trajectory;
+}
+
 bool XArmPlanner::executePath(bool wait)
 {
     moveit::core::MoveItErrorCode code;

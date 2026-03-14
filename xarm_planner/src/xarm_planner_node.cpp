@@ -9,6 +9,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include "xarm_planner/xarm_planner.h"
 #include <std_msgs/msg/bool.hpp>
+#include <xarm_msgs/srv/get_planned_joint_trajectory.hpp>
 #include <xarm_msgs/srv/plan_pose.hpp>
 #include <xarm_msgs/srv/plan_joint.hpp>
 #include <xarm_msgs/srv/plan_exec.hpp>
@@ -27,6 +28,9 @@ private:
     bool do_joint_plan(const std::shared_ptr<xarm_msgs::srv::PlanJoint::Request> req, std::shared_ptr<xarm_msgs::srv::PlanJoint::Response> res);
     bool do_single_cartesian_plan(const std::shared_ptr<xarm_msgs::srv::PlanSingleStraight::Request> req, std::shared_ptr<xarm_msgs::srv::PlanSingleStraight::Response> res);
     bool exec_plan_cb(const std::shared_ptr<xarm_msgs::srv::PlanExec::Request> req, std::shared_ptr<xarm_msgs::srv::PlanExec::Response> res);
+    bool get_planned_joint_trajectory_cb(
+        const std::shared_ptr<xarm_msgs::srv::GetPlannedJointTrajectory::Request> req,
+        std::shared_ptr<xarm_msgs::srv::GetPlannedJointTrajectory::Response> res);
     
 private:
     rclcpp::Node::SharedPtr node_;
@@ -38,6 +42,7 @@ private:
     rclcpp::Service<xarm_msgs::srv::PlanPose>::SharedPtr pose_plan_server_;
     rclcpp::Service<xarm_msgs::srv::PlanJoint>::SharedPtr joint_plan_server_;
     rclcpp::Service<xarm_msgs::srv::PlanSingleStraight>::SharedPtr single_straight_plan_server_;
+    rclcpp::Service<xarm_msgs::srv::GetPlannedJointTrajectory>::SharedPtr get_planned_joint_trajectory_server_;
 };
 
 XArmPlannerRunner::XArmPlannerRunner(rclcpp::Node::SharedPtr& node)
@@ -64,6 +69,9 @@ XArmPlannerRunner::XArmPlannerRunner(rclcpp::Node::SharedPtr& node)
     pose_plan_server_ = node_->create_service<xarm_msgs::srv::PlanPose>("xarm_pose_plan", BIND_CLS_CB(&XArmPlannerRunner::do_pose_plan));
     joint_plan_server_ = node_->create_service<xarm_msgs::srv::PlanJoint>("xarm_joint_plan", BIND_CLS_CB(&XArmPlannerRunner::do_joint_plan));
     single_straight_plan_server_ = node_->create_service<xarm_msgs::srv::PlanSingleStraight>("xarm_straight_plan", BIND_CLS_CB(&XArmPlannerRunner::do_single_cartesian_plan));
+    get_planned_joint_trajectory_server_ = node_->create_service<xarm_msgs::srv::GetPlannedJointTrajectory>(
+        "xarm_get_planned_joint_trajectory",
+        BIND_CLS_CB(&XArmPlannerRunner::get_planned_joint_trajectory_cb));
 }
 
 bool XArmPlannerRunner::do_pose_plan(const std::shared_ptr<xarm_msgs::srv::PlanPose::Request> req, std::shared_ptr<xarm_msgs::srv::PlanPose::Response> res)
@@ -94,6 +102,24 @@ bool XArmPlannerRunner::exec_plan_cb(const std::shared_ptr<xarm_msgs::srv::PlanE
     bool success = xarm_planner_->executePath(req->wait);
     res->success = success;
     return success;
+}
+
+bool XArmPlannerRunner::get_planned_joint_trajectory_cb(
+    const std::shared_ptr<xarm_msgs::srv::GetPlannedJointTrajectory::Request> req,
+    std::shared_ptr<xarm_msgs::srv::GetPlannedJointTrajectory::Response> res)
+{
+    (void)req;
+    const auto trajectory = xarm_planner_->getLastJointTrajectory();
+    if (trajectory.joint_names.empty() || trajectory.points.empty()) {
+        res->success = false;
+        res->message = "no planned joint trajectory is available";
+        return true;
+    }
+
+    res->success = true;
+    res->message = "ok";
+    res->trajectory = trajectory;
+    return true;
 }
 
 void exit_sig_handler(int signum)

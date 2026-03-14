@@ -10,7 +10,15 @@ eef_waypoint_commander_node:
     position_only: true
     # true: Cartesian interpolation between waypoints (>=2 points required)
     # false: Pose-to-pose planning for each waypoint
+    # Note: if any waypoint includes gripper/gripper_deg, execution falls back to sequential mode.
     use_cartesian: false
+    # autonomous_controller path switching:
+    # - waypoint: always plan from waypoints
+    # - record_path: plan from waypoints and save exact joint trajectory
+    # - replay_path: ignore waypoints and replay saved trajectory file
+    # - auto: replay saved trajectory if present, otherwise plan and save it
+    path_mode: auto
+    saved_path_file: saved_paths/xarm6_pick_path.yaml
     waypoint_count: 4
     waypoints:
       0:
@@ -18,17 +26,17 @@ eef_waypoint_commander_node:
         position: [0.30, 0.00, 0.25]
         # [qx, qy, qz, qw] for link_tcp. Ignored when position_only=true.
         orientation: [1.0, 0.0, 0.0, 0.0]
+        # Optional gripper target. `gripper` is radians, `gripper_deg` is also supported.
+        gripper: 0.0
       1:
-<<<<<<< HEAD
-        position: [0.27198, 0.24739, 0.32231]
-        orientation: [0.0044074, 0.67741, 0.0047615, 0.73557]
-=======
         position: [0.27991, 0.18669, 0.18993]
         orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
+        gripper: 0.0
       2:
         position: [0.267815, 0.292945, 0.18993]
         orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
+        gripper_deg: 48.7
       3:
         position: [0.267815, 0.292945, 0.074495]
         orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
->>>>>>> 9dca52c (add: eff waypoint param)
+        gripper_deg: 48.7
