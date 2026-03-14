@@ -3,9 +3,11 @@ eef_waypoint_commander_node:
     robot_type: xarm
     dof: 6
     prefix: ""
-    # Interpret waypoint poses relative to the tool center point.
     pose_reference_link: link_tcp
     wait_each: true
+    # true: ignore waypoint orientation and plan by position only.
+    # This usually matches an RViz test where only the goal position matters.
+    position_only: true
     # true: Cartesian interpolation between waypoints (>=2 points required)
     # false: Pose-to-pose planning for each waypoint
     use_cartesian: false
@@ -14,14 +16,8 @@ eef_waypoint_commander_node:
       0:
         # [x, y, z] in meters, expressed for link_tcp
         position: [0.30, 0.00, 0.25]
-        # [qx, qy, qz, qw] for link_tcp
+        # [qx, qy, qz, qw] for link_tcp. Ignored when position_only=true.
         orientation: [1.0, 0.0, 0.0, 0.0]
       1:
-        position: [0.34, 0.08, 0.26]
-        orientation: [1.0, 0.0, 0.0, 0.0]
-      2:
-        position: [0.30, -0.08, 0.26]
-        orientation: [1.0, 0.0, 0.0, 0.0]
-      3:
-        position: [0.30, -0.08, 0.43]
-        orientation: [1.0, 0.0, 0.0, 0.0]
+        position: [0.27198, 0.24739, 0.32231]
+        orientation: [0.0044074, 0.67741, 0.0047615, 0.73557]

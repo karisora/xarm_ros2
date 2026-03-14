@@ -61,6 +61,9 @@ int main(int argc, char **argv)
   bool use_cartesian = false;
   node->get_parameter_or("use_cartesian", use_cartesian, false);
 
+  bool position_only = false;
+  node->get_parameter_or("position_only", position_only, false);
+
   int waypoint_count = 0;
   node->get_parameter_or("waypoint_count", waypoint_count, 0);
   if (waypoint_count <= 0) {
@@ -70,8 +73,14 @@ int main(int argc, char **argv)
   }
 
   RCLCPP_INFO(
-    node->get_logger(), "namespace=%s, group_name=%s, waypoint_count=%d",
-    node->get_namespace(), group_name.c_str(), waypoint_count);
+    node->get_logger(), "namespace=%s, group_name=%s, waypoint_count=%d, use_cartesian=%d, position_only=%d",
+    node->get_namespace(), group_name.c_str(), waypoint_count, use_cartesian, position_only);
+
+  if (use_cartesian && position_only) {
+    RCLCPP_WARN(
+      node->get_logger(),
+      "position_only is ignored when use_cartesian=true because Cartesian interpolation still uses waypoint orientation");
+  }
 
   xarm_planner::XArmPlanner planner(node, group_name);
 
@@ -135,8 +144,15 @@ int main(int argc, char **argv)
       pose.position.x, pose.position.y, pose.position.z,
       pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
 
-    if (!planner.planPoseTarget(pose)) {
-      RCLCPP_ERROR(node->get_logger(), "planPoseTarget failed at waypoint[%zu]", i);
+    const bool planned = position_only ?
+      planner.planPositionTarget(pose.position.x, pose.position.y, pose.position.z) :
+      planner.planPoseTarget(pose);
+    if (!planned) {
+      RCLCPP_ERROR(
+        node->get_logger(),
+        "%s failed at waypoint[%zu]",
+        position_only ? "planPositionTarget" : "planPoseTarget",
+        i);
       rclcpp::shutdown();
       return 6;
     }
@@ -151,4 +167,3 @@ int main(int argc, char **argv)
   rclcpp::shutdown();
   return 0;
 }
-

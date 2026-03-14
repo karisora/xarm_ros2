@@ -127,46 +127,6 @@ bool XArmPlanner::planCartesianPath(const std::vector<geometry_msgs::msg::Pose>&
     return true;
 }
 
-bool XArmPlanner::setPathOrientationConstraint(
-    const geometry_msgs::msg::Quaternion& orientation,
-    const std::string& frame_id,
-    const std::string& link_name,
-    double x_axis_tolerance,
-    double y_axis_tolerance,
-    double z_axis_tolerance,
-    double weight)
-{
-    moveit_msgs::msg::OrientationConstraint orientation_constraint;
-    orientation_constraint.header.frame_id = frame_id.empty() ? move_group_->getPlanningFrame() : frame_id;
-    orientation_constraint.link_name = link_name.empty() ? move_group_->getEndEffectorLink() : link_name;
-    orientation_constraint.orientation = orientation;
-    orientation_constraint.absolute_x_axis_tolerance = x_axis_tolerance;
-    orientation_constraint.absolute_y_axis_tolerance = y_axis_tolerance;
-    orientation_constraint.absolute_z_axis_tolerance = z_axis_tolerance;
-    orientation_constraint.weight = weight;
-
-    if (orientation_constraint.link_name.empty())
-    {
-        RCLCPP_ERROR(node_->get_logger(), "setPathOrientationConstraint: link_name is empty");
-        return false;
-    }
-    if (orientation_constraint.header.frame_id.empty())
-    {
-        RCLCPP_ERROR(node_->get_logger(), "setPathOrientationConstraint: frame_id is empty");
-        return false;
-    }
-
-    moveit_msgs::msg::Constraints path_constraints;
-    path_constraints.orientation_constraints.push_back(orientation_constraint);
-    move_group_->setPathConstraints(path_constraints);
-    return true;
-}
-
-void XArmPlanner::clearPathConstraints()
-{
-    move_group_->clearPathConstraints();
-}
-
 std::string XArmPlanner::getPlanningFrame() const
 {
     return move_group_->getPlanningFrame();

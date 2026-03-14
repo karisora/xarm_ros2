@@ -40,15 +40,6 @@ namespace xarm_planner
         bool planPoseTargets(const std::vector<geometry_msgs::msg::Pose>& pose_target_vector);
         bool planCartesianPath(const std::vector<geometry_msgs::msg::Pose>& pose_target_vector);
 
-        bool setPathOrientationConstraint(
-            const geometry_msgs::msg::Quaternion& orientation,
-            const std::string& frame_id,
-            const std::string& link_name = "",
-            double x_axis_tolerance = 0.03,
-            double y_axis_tolerance = 0.03,
-            double z_axis_tolerance = 3.14,
-            double weight = 1.0);
-        void clearPathConstraints();
         std::string getPlanningFrame() const;
         std::string getEndEffectorLink() const;
 
