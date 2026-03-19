@@ -19,6 +19,14 @@
             </mesh>
           </geometry>
         </visual>
+        <collision name="stage_collision">
+          <geometry>
+            <mesh>
+              <uri>file:///home/karisora/dev_ws/src/xarm_ros2/xarm_description/meshes/gripper/xarm/stage.stl</uri>
+              <scale>0.1 0.1 0.1</scale>
+            </mesh>
+          </geometry>
+        </collision>
       </link>
     </model>
 

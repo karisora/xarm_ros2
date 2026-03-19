@@ -18,8 +18,8 @@ eef_waypoint_commander_node:
     # - replay_path: ignore waypoints and replay saved trajectory file
     # - auto: replay saved trajectory if present, otherwise plan and save it
     path_mode: waypoint
-    saved_path_file: ~/dev_ws/saved_paths/xarm6_pick_path.yaml
-    waypoint_count: 7
+    saved_path_file: ~/dev_ws/saved_paths/n1.yaml
+    waypoint_count: 3
     waypoints:
       0:
         # [x, y, z] in meters, expressed for link_tcp
@@ -33,25 +33,5 @@ eef_waypoint_commander_node:
         position: [0.267815, 0.25669, 0.18993]
         orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
         gripper: 0.0
-      2:
-        position: [0.267815, 0.292945, 0.18993]
-        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
-        gripper_deg: 35.0
-      3:
-        position: [0.301, 0.292945, 0.18993]
-        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
-        gripper_deg: 37.0
-      4:
-        position: [0.301, 0.292945, 0.074495]
-        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
-        gripper_deg: 37.0
-      5:
-        position: [0.301, 0.292945, 0.074495]
-        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
-        gripper_deg: 39.0
-      6:
-        position: [0.301, 0.292945, 0.18993]
-        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
-        gripper_deg: 39.0
 
 
