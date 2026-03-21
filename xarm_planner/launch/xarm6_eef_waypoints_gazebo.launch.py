@@ -15,10 +15,10 @@ def generate_launch_description():
     gripper_trajectory_topic = LaunchConfiguration('gripper_trajectory_topic', default='')
     gripper_joint_name = LaunchConfiguration('gripper_joint_name', default='drive_joint')
     gripper_command_duration_sec = LaunchConfiguration('gripper_command_duration_sec', default='1.0')
-    waypoints_file = LaunchConfiguration(
+    waypoints_file = LaunchConfiguration( # ここのyamlファイルは、xarm_planner/config/n1.yamlを指すようにしてください。
         'waypoints_file',
         default=PathJoinSubstitution(
-            [FindPackageShare('xarm_planner'), 'config', 'eef_waypoints_example.yaml']
+            [FindPackageShare('xarm_planner'), 'config', 'n1.yaml']
         ),
     )
 
@@ -60,7 +60,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'waypoints_file',
             default_value=PathJoinSubstitution(
-                [FindPackageShare('xarm_planner'), 'config', 'eef_waypoints_example.yaml']
+                [FindPackageShare('xarm_planner'), 'config', 'n1.yaml']
             ),
             description='YAML file containing end-effector pose waypoints',
         ),

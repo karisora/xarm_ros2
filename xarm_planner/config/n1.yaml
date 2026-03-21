@@ -15,10 +15,14 @@ eef_waypoint_commander_node:
     # autonomous_controller path switching:
     # - waypoint: always plan from waypoints
     # - record_path: plan from waypoints and save exact joint trajectory
-    # - replay_path: ignore waypoints and replay saved trajectory file
-    # - auto: replay saved trajectory if present, otherwise plan and save it
+    # - replay_path: ignore waypoints and replay saved trajectory file(s)
+    # - auto: replay saved trajectory file(s) if present, otherwise plan and save
     path_mode: waypoint
     saved_path_file: ~/dev_ws/saved_paths/n1.yaml
+    # Optional: when replay_path is used, multiple saved files are executed in order.
+    # saved_path_files:
+    #   - ~/dev_ws/saved_paths/n1_part1.yaml
+    #   - ~/dev_ws/saved_paths/n1_part2.yaml
     waypoint_count: 3
     waypoints:
       0:
@@ -33,5 +37,4 @@ eef_waypoint_commander_node:
         position: [0.267815, 0.25669, 0.18993]
         orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
         gripper: 0.0
-
 

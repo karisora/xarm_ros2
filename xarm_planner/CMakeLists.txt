@@ -32,6 +32,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(moveit_msgs REQUIRED)
 find_package(xarm_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 set(dependencies "rclcpp" "std_msgs" "geometry_msgs" "trajectory_msgs" "moveit_msgs" "xarm_msgs" "moveit")
 
@@ -81,6 +82,7 @@ ament_target_dependencies(eef_waypoint_commander_node
 )
 target_link_libraries(eef_waypoint_commander_node
   xarm_planner
+  yaml-cpp
   ${ament_LIBRARIES}
 )
 

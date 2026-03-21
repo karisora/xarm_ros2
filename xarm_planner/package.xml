@@ -17,6 +17,7 @@
   <depend>trajectory_msgs</depend>
   <depend>moveit_msgs</depend>
   <depend>xarm_msgs</depend>
+  <depend>yaml-cpp</depend>
   <depend>xarm_description</depend>
   <depend>xarm_moveit_config</depend>
 

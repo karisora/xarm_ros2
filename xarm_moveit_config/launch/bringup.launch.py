@@ -29,6 +29,9 @@ def generate_launch_description():
     unit_id = LaunchConfiguration("unit_id")
     manual_gripper_via_topic = LaunchConfiguration("manual_gripper_via_topic")
     bridge_start_delay = LaunchConfiguration("bridge_start_delay")
+    waypoints_file = LaunchConfiguration("waypoints_file")
+    path_mode = LaunchConfiguration("path_mode")
+    saved_path_file = LaunchConfiguration("saved_path_file")
 
     moveit_stack_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -44,6 +47,9 @@ def generate_launch_description():
             "launch_manual_controller": launch_manual_controller,
             "launch_autonomous_controller": launch_autonomous_controller,
             "launch_planner_node": launch_planner_node,
+            "waypoints_file": waypoints_file,
+            "path_mode": path_mode,
+            "saved_path_file": saved_path_file,
         }.items(),
     )
 
@@ -101,6 +107,14 @@ def generate_launch_description():
             DeclareLaunchArgument("unit_id", default_value="unit-mys01"),
             DeclareLaunchArgument("manual_gripper_via_topic", default_value="true"),
             DeclareLaunchArgument("bridge_start_delay", default_value="2.0"),
+            DeclareLaunchArgument(
+                "waypoints_file",
+                default_value=PathJoinSubstitution(
+                    [FindPackageShare("xarm_planner"), "config", "eef_waypoints_example.yaml"]
+                ),
+            ),
+            DeclareLaunchArgument("path_mode", default_value="waypoint"),
+            DeclareLaunchArgument("saved_path_file", default_value=""),
             moveit_stack_launch,
             master_controller_launch,
             delayed_api_bridge_launch,
