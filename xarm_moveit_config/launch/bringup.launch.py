@@ -110,7 +110,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "waypoints_file",
                 default_value=PathJoinSubstitution(
-                    [FindPackageShare("xarm_planner"), "config", "eef_waypoints_example.yaml"]
+                    [FindPackageShare("xarm_planner"), "config", "n1.yaml"]
                 ),
             ),
             DeclareLaunchArgument("path_mode", default_value="waypoint"),

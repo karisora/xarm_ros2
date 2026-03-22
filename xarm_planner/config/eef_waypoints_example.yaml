@@ -17,7 +17,7 @@ eef_waypoint_commander_node:
     # - record_path: plan from waypoints and save exact joint trajectory
     # - replay_path: ignore waypoints and replay saved trajectory file
     # - auto: replay saved trajectory if present, otherwise plan and save it
-    path_mode: record_path
+    path_mode: replay_path
     saved_path_file: ~/dev_ws/saved_paths/xarm6_pick_path.yaml
     waypoint_count: 7
     waypoints:

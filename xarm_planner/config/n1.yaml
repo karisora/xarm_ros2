@@ -23,7 +23,7 @@ eef_waypoint_commander_node:
     # saved_path_files:
     #   - ~/dev_ws/saved_paths/n1_part1.yaml
     #   - ~/dev_ws/saved_paths/n1_part2.yaml
-    waypoint_count: 3
+    waypoint_count: 8
     waypoints:
       0:
         # [x, y, z] in meters, expressed for link_tcp
@@ -32,9 +32,20 @@ eef_waypoint_commander_node:
         # [qx, qy, qz, qw] for link_tcp. Ignored when position_only=true.
         orientation: [1.0, 0.0, 0.0, 0.0]
         # Optional gripper target. `gripper` is radians, `gripper_deg` is also supported.
-        gripper: 0.0
-      1:
-        position: [0.267815, 0.25669, 0.18993]
-        orientation: [0.00086109, 0.70937, -0.00083113, 0.70483]
-        gripper: 0.0
-
+        gripper_deg: 35.0
+      1: # 漏斗近くによる
+        position: [0.24547, -0.51683, 0.25232]
+        orientation: [0.21616, 0.67439, -0.20533, 0.67551]
+        gripper_deg: 35.0
+      2:
+        position: [0.24547, -0.51683, 0.10232]
+        orientation: [0.21616, 0.67439, -0.20533, 0.67551]
+        gripper_deg: 35.0
+      3:
+        position: [0.24547, -0.51683, 0.10232]
+        orientation: [0.21616, 0.67439, -0.20533, 0.67551]
+        gripper_deg: 44.0
+      4:
+        position: [0.24547, -0.51683, 0.30000]
+        orientation: [0.21616, 0.67439, -0.20533, 0.67551]
+        gripper_deg: 44.0
